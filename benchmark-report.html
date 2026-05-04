@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Benchmark Report</title>
+  <style>
+    body { font-family: Segoe UI, Arial, sans-serif; margin: 32px; color: #111; background: #f6f4ef; }
+    h1, h2 { margin-bottom: 8px; }
+    table { border-collapse: collapse; width: 100%; margin: 20px 0; background: white; }
+    th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+    th { background: #f0dfb5; }
+    .chart { display: grid; gap: 10px; margin: 24px 0; }
+    .bar-row { display: grid; grid-template-columns: 180px 1fr 120px; align-items: center; gap: 12px; }
+    .bar { height: 22px; background: linear-gradient(90deg, #244b5a, #5fa8a0); border-radius: 6px; }
+    .note { color: #555; }
+  </style>
+</head>
+<body>
+  <h1>Local Benchmark Report</h1>
+  <p class="note">Seed events: 200</p>
+  <h2>Summary Table</h2>
+  <table><thead><tr><th>Profile</th><th>Events</th><th>Alerts</th><th>Total ms</th><th>Throughput eps</th><th>Rule p50 ms</th><th>Rule p95 ms</th></tr></thead><tbody><tr><td>smoke</td><td>200</td><td>123</td><td>11.14</td><td>17952.516</td><td>0.00705</td><td>0.015005</td></tr><tr><td>mini</td><td>500</td><td>301</td><td>49.49</td><td>10102.949</td><td>0.0066</td><td>0.011705</td></tr></tbody></table>
+  <h2>Throughput (events/sec)</h2>
+  <div class="chart"><div class='bar-row'><div>smoke</div><div class='bar' style='width:100.00%'></div><div>17952.516</div></div><div class='bar-row'><div>mini</div><div class='bar' style='width:56.28%'></div><div>10102.949</div></div></div>
+  <h2>Total Runtime (ms)</h2>
+  <div class="chart"><div class='bar-row'><div>smoke</div><div class='bar' style='width:22.51%'></div><div>11.140</div></div><div class='bar-row'><div>mini</div><div class='bar' style='width:100.00%'></div><div>49.490</div></div></div>
+</body>
+</html>
