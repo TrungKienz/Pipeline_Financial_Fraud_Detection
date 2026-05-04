@@ -1,3 +1,2 @@
-Data/
-*.csv
-*.zip
+Data/*.zip
+Data/**/*.csv
