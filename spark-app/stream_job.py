@@ -912,9 +912,10 @@ def start_query(
         .option("checkpointLocation", os.path.join(CHECKPOINT_ROOT, checkpoint_suffix))
     )
     if foreach_batch is not None:
-        return writer.foreachBatch(foreach_batch).start()
+        return writer.trigger(processingTime="2 seconds").foreachBatch(foreach_batch).start()
     return (
         writer.format("kafka")
+        .trigger(processingTime="2 seconds")
         .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
         .option("topic", PIPELINE_DEAD_LETTER_TOPIC)
         .start()
