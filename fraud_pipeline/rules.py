@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from math import prod
 
 from .config import PipelineConfig
 from .models import FraudDecision, TransactionEvent
 
+LOGGER = logging.getLogger(__name__)
+
 try:
     from model.model_utils import predict_proba, model_is_loaded, get_model_version, get_threshold
     _ML_AVAILABLE = True
 except ImportError:
+    LOGGER.exception("ML runtime unavailable: failed to import model utilities")
     _ML_AVAILABLE = False
 
 
@@ -87,6 +91,7 @@ class RuleEngine:
         try:
             return predict_proba(event)
         except Exception:
+            LOGGER.exception("ML prediction failed for event_id=%s", event.event_id)
             return 0.0
 
     def _is_account_drain_near_zero(self, event: TransactionEvent) -> bool:

@@ -173,11 +173,18 @@ services:
     depends_on:
       spark-master:
         condition: service_healthy
+    user: root
     command: >
       /bin/bash -lc "
       mkdir -p /tmp/spark-events &&
-      export SPARK_HISTORY_OPTS='-Dspark.history.fs.logDirectory=file:/tmp/spark-events -Dspark.history.ui.port=18080' &&
-      /opt/spark/bin/spark-class org.apache.spark.deploy.history.HistoryServer
+      chmod -R 777 /tmp/spark-events &&
+      export SPARK_HISTORY_OPTS='
+      -Dspark.history.fs.logDirectory=file:///tmp/spark-events
+      -Dspark.history.ui.port=18080
+      -Dspark.history.fs.update.interval=5s
+      -Dspark.history.fs.cleaner.enabled=false
+      ' &&
+      exec /opt/spark/bin/spark-class org.apache.spark.deploy.history.HistoryServer
       "
     ports:
       - "18080:18080"
@@ -224,7 +231,7 @@ services:
     volumes:
       - ./fraud_pipeline:/opt/project/fraud_pipeline
       - ./spark-app:/opt/spark/app
-      - ./model:/opt/spark/model
+      - ./model:/opt/project/model
       - spark_events:/tmp/spark-events
       - spark_checkpoints:/tmp/spark_checkpoints
     ports:

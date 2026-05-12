@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from fraud_pipeline.features import FEATURE_COLUMNS, TXN_TYPE_CATEGORIES, build_
 from fraud_pipeline.models import TransactionEvent
 
 MODEL_DIR = Path(__file__).resolve().parent
+LOGGER = logging.getLogger(__name__)
 
 
 def _model_path(name: str) -> Path:
@@ -23,8 +25,13 @@ def _model_path(name: str) -> Path:
 def _load_artifact(name: str):
     path = _model_path(name)
     if not path.exists():
+        LOGGER.warning("ML artifact not found: %s", path)
         return None
-    return joblib.load(str(path))
+    try:
+        return joblib.load(str(path))
+    except Exception:
+        LOGGER.exception("Failed to load ML artifact: %s", path)
+        return None
 
 
 _model_cache: dict[str, Any] = {}
@@ -46,8 +53,13 @@ def _get_feature_columns():
     if "feature_columns" not in _model_cache:
         path = _model_path("feature_columns.json")
         if path.exists():
-            _model_cache["feature_columns"] = json.loads(path.read_text(encoding="utf-8"))
+            try:
+                _model_cache["feature_columns"] = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                LOGGER.exception("Failed to read feature columns: %s", path)
+                _model_cache["feature_columns"] = None
         else:
+            LOGGER.warning("Feature columns file not found: %s", path)
             _model_cache["feature_columns"] = None
     return _model_cache["feature_columns"]
 
@@ -56,8 +68,13 @@ def _get_metadata():
     if "metadata" not in _model_cache:
         path = _model_path("model_metadata.json")
         if path.exists():
-            _model_cache["metadata"] = json.loads(path.read_text(encoding="utf-8"))
+            try:
+                _model_cache["metadata"] = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                LOGGER.exception("Failed to read model metadata: %s", path)
+                _model_cache["metadata"] = None
         else:
+            LOGGER.warning("Model metadata file not found: %s", path)
             _model_cache["metadata"] = None
     return _model_cache["metadata"]
 
