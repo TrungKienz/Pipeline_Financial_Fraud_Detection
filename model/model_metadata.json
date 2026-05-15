@@ -1,0 +1,47 @@
+{
+  "model_version": "v1_paysim_rf",
+  "model_type": "RandomForestClassifier",
+  "n_estimators": 100,
+  "max_depth": 15,
+  "min_samples_leaf": 5,
+  "class_weight": "balanced",
+  "feature_columns": [
+    "step",
+    "amount",
+    "sender_balance_delta",
+    "receiver_balance_delta",
+    "sender_depletion_ratio",
+    "amount_to_balance_ratio",
+    "is_zero_balance_after",
+    "is_same_sender_receiver",
+    "sender_balance_inconsistent",
+    "receiver_balance_inconsistent",
+    "type_CASH_IN",
+    "type_CASH_OUT",
+    "type_DEBIT",
+    "type_PAYMENT",
+    "type_TRANSFER"
+  ],
+  "optimal_threshold": 0.7836939782036696,
+  "metrics": {
+    "auc_roc": 0.9999,
+    "auc_pr": 0.9988,
+    "optimal_threshold": 0.7837,
+    "f1_score": 0.9991,
+    "precision": 1.0,
+    "recall": 0.9982,
+    "train_time_seconds": 119.64,
+    "confusion_matrix": {
+      "tn": 1270882,
+      "fp": 0,
+      "fn": 3,
+      "tp": 1639
+    },
+    "validation_metrics": {
+      "auc_pr": 0.9985,
+      "f1": 0.9976,
+      "precision": 0.9994,
+      "recall": 0.9957
+    }
+  }
+}

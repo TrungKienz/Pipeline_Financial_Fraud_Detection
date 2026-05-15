@@ -115,6 +115,17 @@ def ensure_schema(host: str = "localhost", port: int = 9042, keyspace: str = "fr
             )
             """
         )
+        session.execute(
+            """
+            CREATE TABLE IF NOT EXISTS benchmark_stage_timings_by_run (
+              benchmark_run_id text,
+              event_id text,
+              spark_seen_at timestamp,
+              cassandra_persisted_at timestamp,
+              PRIMARY KEY ((benchmark_run_id), event_id)
+            )
+            """
+        )
     finally:
         session.shutdown()
         cluster.shutdown()

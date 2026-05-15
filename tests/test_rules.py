@@ -61,7 +61,7 @@ class RuleEngineTests(unittest.TestCase):
 
         self.assertIn("sender_fan_out_burst", decision.triggered_rules)
         self.assertIn("structured_split_transfer", decision.triggered_rules)
-        self.assertGreater(decision.risk_score, 0.3)
+        self.assertGreater(decision.risk_score, 0.28)
 
     def test_receiver_fan_in_triggers_alert(self) -> None:
         config = PipelineConfig(

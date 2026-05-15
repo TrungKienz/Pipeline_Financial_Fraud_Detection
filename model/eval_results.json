@@ -1,0 +1,34 @@
+{
+  "metrics": {
+    "auc_roc": 0.9999,
+    "auc_pr": 0.9988,
+    "optimal_threshold": 0.7837,
+    "f1_score": 0.9991,
+    "precision": 1.0,
+    "recall": 0.9982,
+    "train_time_seconds": 119.64,
+    "confusion_matrix": {
+      "tn": 1270882,
+      "fp": 0,
+      "fn": 3,
+      "tp": 1639
+    },
+    "validation_metrics": {
+      "auc_pr": 0.9985,
+      "f1": 0.9976,
+      "precision": 0.9994,
+      "recall": 0.9957
+    }
+  },
+  "optimal_threshold": 0.7836939782036696,
+  "model_version": "v1_paysim_rf",
+  "plots": [
+    "amount_dist.png",
+    "confusion_matrix.png",
+    "correlation_matrix.png",
+    "feature_importance.png",
+    "fraud_by_type.png",
+    "pr_curve.png",
+    "roc_curve.png"
+  ]
+}

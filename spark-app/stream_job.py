@@ -45,6 +45,7 @@ JOIN_TOLERANCE = "30 seconds"
 TUMBLING_WINDOW = "5 minutes"
 SLIDING_WINDOW = "10 minutes"
 SLIDE_INTERVAL = "5 minutes"
+BENCHMARK_EVENT_PREFIX = "bench:"
 RULE_REFRESH_SECONDS = int(os.getenv("RISK_RULE_REFRESH_SECONDS", "0"))
 CHECKPOINT_ROOT = os.path.join(os.getenv("SPARK_CHECKPOINT_ROOT", "/tmp/spark_checkpoints"), "v4_clean")
 
@@ -556,6 +557,13 @@ def get_prepared_statements() -> dict[str, Any]:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """
         ),
+        "insert_benchmark_stage_timing": session.prepare(
+            """
+            INSERT INTO benchmark_stage_timings_by_run (
+              benchmark_run_id, event_id, spark_seen_at, cassandra_persisted_at
+            ) VALUES (?, ?, ?, ?)
+            """
+        ),
     }
     _RESOURCE_CACHE["prepared_statements"] = statements
     return statements
@@ -993,6 +1001,33 @@ def persist_metric(metric: WindowMetric, window_type: str) -> None:
     )
 
 
+def extract_benchmark_run_id(event_id: str) -> str | None:
+    if not event_id.startswith(BENCHMARK_EVENT_PREFIX):
+        return None
+    parts = event_id.split(":", 2)
+    if len(parts) != 3 or not parts[1]:
+        return None
+    return parts[1]
+
+
+def persist_benchmark_stage_timing(
+    benchmark_run_id: str,
+    event_id: str,
+    spark_seen_at: datetime,
+    cassandra_persisted_at: datetime,
+) -> None:
+    statements = get_prepared_statements()
+    get_cassandra_session().execute(
+        statements["insert_benchmark_stage_timing"],
+        (
+            benchmark_run_id,
+            event_id,
+            to_utc_naive(spark_seen_at),
+            to_utc_naive(cassandra_persisted_at),
+        ),
+    )
+
+
 def publish_alert_once(alert_key: str, payload: dict[str, Any]) -> None:
     producer = get_kafka_producer()
     redis_client = get_redis_client()
@@ -1033,6 +1068,8 @@ def process_integrated_batch(batch_df: DataFrame, batch_id: int, query_name: str
     for row in ordered_batch.toLocalIterator():
         payload = row.asDict(recursive=True)
         event = integrated_payload_to_transaction_event(payload)
+        benchmark_run_id = extract_benchmark_run_id(event.event_id)
+        spark_seen_at = datetime.now(timezone.utc)
         recent = load_recent_sender_events(get_redis_client(), event, config)
         recent.extend(in_batch_sender_history.get(event.name_orig, []))
         receiver_recent = load_recent_receiver_events(get_redis_client(), event, config)
@@ -1061,6 +1098,14 @@ def process_integrated_batch(batch_df: DataFrame, batch_id: int, query_name: str
         append_receiver_history(get_redis_client(), event, config)
         append_inbound_history(get_redis_client(), event, config)
         append_counterparty_history(get_redis_client(), event)
+        cassandra_persisted_at = datetime.now(timezone.utc)
+        if benchmark_run_id:
+            persist_benchmark_stage_timing(
+                benchmark_run_id=str(benchmark_run_id),
+                event_id=event.event_id,
+                spark_seen_at=spark_seen_at,
+                cassandra_persisted_at=cassandra_persisted_at,
+            )
         in_batch_sender_history.setdefault(event.name_orig, []).append(event)
         in_batch_receiver_history.setdefault(event.name_dest, []).append(event)
         if event.txn_type in {"TRANSFER", "CASH_IN"}:
