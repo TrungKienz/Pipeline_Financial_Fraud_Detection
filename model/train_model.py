@@ -27,12 +27,119 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from fraud_pipeline import PipelineConfig, iter_transaction_events, transaction_to_dict
-from fraud_pipeline.features import FEATURE_COLUMNS, TXN_TYPE_CATEGORIES, build_feature_record
+from fraud_pipeline.features import (
+    FEATURE_COLUMNS,
+    TXN_TYPE_CATEGORIES,
+    BROWSER_CATEGORIES,
+    DEVICE_TYPE_CATEGORIES,
+    COUNTRY_CATEGORIES,
+    build_feature_record,
+)
 from fraud_pipeline.parsing import parse_csv_row
 
 MODEL_DIR = Path(__file__).resolve().parent
 PLOTS_DIR = MODEL_DIR / "plots"
 PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+from collections import defaultdict
+
+class StateSimulator:
+    def __init__(self, config: PipelineConfig):
+        self.config = config
+        self.sender_history = defaultdict(list)
+        self.receiver_history = defaultdict(list)
+        self.inbound_history = defaultdict(list)
+        self.counterparties = defaultdict(set)
+
+    def process_event(self, event) -> dict[str, float]:
+        ts = event.event_time.timestamp()
+        
+        # Sender history expiration (ensure we have at least 1 hour of history)
+        sender_hist = self.sender_history[event.name_orig]
+        sender_hist = [ev for ev in sender_hist if ts - ev.event_time.timestamp() <= max(self.config.rapid_outflow_window_seconds, 3600)]
+        self.sender_history[event.name_orig] = sender_hist
+        
+        # Receiver history expiration
+        receiver_hist = self.receiver_history[event.name_dest]
+        receiver_hist = [ev for ev in receiver_hist if ts - ev.event_time.timestamp() <= self.config.fan_in_window_seconds]
+        self.receiver_history[event.name_dest] = receiver_hist
+
+        # Inbound history expiration
+        inbound_hist = self.inbound_history[event.name_orig]
+        inbound_hist = [ev for ev in inbound_hist if ts - ev.event_time.timestamp() <= self.config.cashout_after_inbound_window_seconds]
+        self.inbound_history[event.name_orig] = inbound_hist
+
+        # Compute sender recent count & amount (fan-out window)
+        sender_window = []
+        if event.txn_type in {"TRANSFER", "CASH_OUT"}:
+            sender_window = [
+                ev for ev in sender_hist
+                if ev.name_orig == event.name_orig and ts - ev.event_time.timestamp() <= self.config.fan_out_window_seconds
+            ]
+        sender_count = len(sender_window)
+        sender_amount = sum(ev.amount for ev in sender_window)
+
+        # Compute receiver recent count & amount (fan-in window)
+        receiver_window = []
+        if event.txn_type in {"TRANSFER", "CASH_IN"}:
+            receiver_window = [
+                ev for ev in receiver_hist
+                if ev.name_dest == event.name_dest and ts - ev.event_time.timestamp() <= self.config.fan_in_window_seconds
+            ]
+        receiver_count = len(receiver_window)
+        receiver_amount = sum(ev.amount for ev in receiver_window)
+
+        # New counterparty check
+        is_new_cp = 1.0 if (event.txn_type == "TRANSFER" and event.name_dest not in self.counterparties[event.name_orig]) else 0.0
+
+        # Inbound to cashout ratio
+        inbound_ratio = 0.0
+        if event.txn_type == "CASH_OUT":
+            matching_inbound = [
+                ev for ev in inbound_hist
+                if ev.name_dest == event.name_orig and ts - ev.event_time.timestamp() <= self.config.cashout_after_inbound_window_seconds
+            ]
+            inbound_total = sum(ev.amount for ev in matching_inbound)
+            if inbound_total > 0:
+                inbound_ratio = event.amount / inbound_total
+
+        # 5. New features: velocity_transactions_1h
+        h1_start = ts - 3600
+        sender_h1_window = [
+            ev for ev in sender_hist
+            if ev.name_orig == event.name_orig and ts - ev.event_time.timestamp() <= 3600
+        ]
+        velocity_1h = len(sender_h1_window)
+
+        # 6. New features: time_since_last_purchase
+        sender_txs = [
+            ev for ev in sender_hist
+            if ev.name_orig == event.name_orig and ev.event_time.timestamp() < ts
+        ]
+        if sender_txs:
+            last_ts = max(ev.event_time.timestamp() for ev in sender_txs)
+            time_since_last = ts - last_ts
+        else:
+            time_since_last = 86400.0
+
+        # Update histories
+        self.sender_history[event.name_orig].append(event)
+        self.receiver_history[event.name_dest].append(event)
+        if event.txn_type in {"TRANSFER", "CASH_IN"}:
+            self.inbound_history[event.name_dest].append(event)
+        self.counterparties[event.name_orig].add(event.name_dest)
+
+        return {
+            "sender_recent_txn_count": float(sender_count),
+            "sender_recent_total_amount": float(sender_amount),
+            "receiver_recent_txn_count": float(receiver_count),
+            "receiver_recent_total_amount": float(receiver_amount),
+            "is_new_counterparty": is_new_cp,
+            "inbound_to_cashout_ratio": inbound_ratio,
+            "velocity_transactions_1h": float(velocity_1h),
+            "time_since_last_purchase": float(time_since_last),
+        }
 
 
 def load_events(csv_path: str, limit: int | None) -> list:
@@ -41,25 +148,44 @@ def load_events(csv_path: str, limit: int | None) -> list:
         print(f"[INFO] Limit: {limit} rows")
     config = PipelineConfig()
     events = list(iter_transaction_events(csv_path, config=config, limit=limit))
-    print(f"[INFO] Loaded {len(events)} transactions")
+    events.sort(key=lambda ev: ev.event_time)
+    print(f"[INFO] Loaded and sorted {len(events)} transactions")
     return events
 
 
 def build_features(events: list) -> tuple[np.ndarray, np.ndarray, list[str], list[str]]:
-    records = [build_feature_record(ev) for ev in events]
-    txn_types = [r["txn_type"] for r in records]
-    labels = np.array([r["label_is_fraud"] for r in records], dtype=np.int32)
-
+    config = PipelineConfig()
+    simulator = StateSimulator(config)
+    
     feature_dicts = []
-    for r in records:
+    txn_types = []
+    labels = []
+    
+    for ev in events:
+        dyn_feats = simulator.process_event(ev)
+        r = build_feature_record(ev, config=config, dynamic_features=dyn_feats)
+        txn_types.append(r["txn_type"])
+        labels.append(r["label_is_fraud"])
+        
         fv = {col: float(r[col]) for col in FEATURE_COLUMNS}
         fv.update({f"type_{cat}": int(r["txn_type"] == cat) for cat in TXN_TYPE_CATEGORIES})
+        fv.update({f"browser_{cat}": int(r["browser"] == cat) for cat in BROWSER_CATEGORIES})
+        fv.update({f"device_type_{cat}": int(r["device_type"] == cat) for cat in DEVICE_TYPE_CATEGORIES})
+        fv.update({f"country_{cat}": int(r["country"] == cat) for cat in COUNTRY_CATEGORIES})
         feature_dicts.append(fv)
 
-    all_cols = FEATURE_COLUMNS + [f"type_{cat}" for cat in TXN_TYPE_CATEGORIES]
+    labels = np.array(labels, dtype=np.int32)
+    all_cols = (
+        FEATURE_COLUMNS
+        + [f"type_{cat}" for cat in TXN_TYPE_CATEGORIES]
+        + [f"browser_{cat}" for cat in BROWSER_CATEGORIES]
+        + [f"device_type_{cat}" for cat in DEVICE_TYPE_CATEGORIES]
+        + [f"country_{cat}" for cat in COUNTRY_CATEGORIES]
+    )
     X = np.array([[d[col] for col in all_cols] for d in feature_dicts], dtype=np.float64)
 
     return X, labels, txn_types, all_cols
+
 
 
 def run_eda(X: np.ndarray, y: np.ndarray, txn_types: list[str], feature_cols: list[str]):
@@ -399,6 +525,43 @@ def export_test_csv(events: list, output_path: Path):
     print(f"  File size: {output_path.stat().st_size / 1024:.1f} KB")
 
 
+def export_final_feature_table(events: list, feature_cols: list[str], output_path: Path, limit: int = 20000):
+    print(f"\n[EXPORT] Exporting final feature table ({limit} rows) to {output_path}")
+    config = PipelineConfig()
+    simulator = StateSimulator(config)
+    
+    rows_to_export = events[:limit]
+    
+    with output_path.open("w", encoding="utf-8", newline="") as f:
+        fieldnames = ["event_id", "label_is_fraud", "txn_type", "browser", "device_type", "country"] + feature_cols
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        
+        for ev in rows_to_export:
+            dyn_feats = simulator.process_event(ev)
+            r = build_feature_record(ev, config=config, dynamic_features=dyn_feats)
+            
+            row_dict = {
+                "event_id": ev.event_id,
+                "label_is_fraud": r["label_is_fraud"],
+                "txn_type": r["txn_type"],
+                "browser": r["browser"],
+                "device_type": r["device_type"],
+                "country": r["country"],
+            }
+            
+            fv = {col: float(r[col]) for col in FEATURE_COLUMNS}
+            fv.update({f"type_{cat}": int(r["txn_type"] == cat) for cat in TXN_TYPE_CATEGORIES})
+            fv.update({f"browser_{cat}": int(r["browser"] == cat) for cat in BROWSER_CATEGORIES})
+            fv.update({f"device_type_{cat}": int(r["device_type"] == cat) for cat in DEVICE_TYPE_CATEGORIES})
+            fv.update({f"country_{cat}": int(r["country"] == cat) for cat in COUNTRY_CATEGORIES})
+            
+            row_dict.update({col: fv[col] for col in feature_cols})
+            writer.writerow(row_dict)
+            
+    print(f"  File size: {output_path.stat().st_size / 1024:.1f} KB")
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Train Fraud Detection ML Model")
     parser.add_argument("--csv-path", required=True, help="Path to PaySim CSV dataset")
@@ -458,6 +621,9 @@ def main():
     test_csv_path = MODEL_DIR / "test_set.csv"
     export_test_csv(events_test, test_csv_path)
 
+    feature_table_path = MODEL_DIR / "final_feature_table.csv"
+    export_final_feature_table(events_test, feature_cols, feature_table_path)
+
     print("\n" + "=" * 60)
     print("TRAINING PIPELINE COMPLETED SUCCESSFULLY")
     print("=" * 60)
@@ -469,6 +635,7 @@ def main():
     print(f"\nPlots saved to: {PLOTS_DIR}")
     print(f"Model artifacts: {MODEL_DIR}")
     print(f"Test set: {test_csv_path}")
+    print(f"Feature table: {feature_table_path}")
 
 
 if __name__ == "__main__":
