@@ -1,4 +1,24 @@
 {
+  "model_version": "v1_paysim_xgb",
+  "model_type": "XGBClassifier",
+  "feature_columns": [
+    "step",
+    "amount",
+    "sender_balance_delta",
+    "receiver_balance_delta",
+    "sender_depletion_ratio",
+    "amount_to_balance_ratio",
+    "is_zero_balance_after",
+    "is_same_sender_receiver",
+    "sender_balance_inconsistent",
+    "receiver_balance_inconsistent",
+    "type_CASH_IN",
+    "type_CASH_OUT",
+    "type_DEBIT",
+    "type_PAYMENT",
+    "type_TRANSFER"
+  ],
+  "optimal_threshold": 0.9998631477355957,
   "metrics": {
     "model_type": "XGBClassifier",
     "hyperparameters": {
@@ -28,16 +48,5 @@
       "precision": 1.0,
       "recall": 0.9957
     }
-  },
-  "optimal_threshold": 0.9998631477355957,
-  "model_version": "v1_paysim_xgb",
-  "plots": [
-    "amount_dist.png",
-    "confusion_matrix.png",
-    "correlation_matrix.png",
-    "feature_importance.png",
-    "fraud_by_type.png",
-    "pr_curve.png",
-    "roc_curve.png"
-  ]
+  }
 }

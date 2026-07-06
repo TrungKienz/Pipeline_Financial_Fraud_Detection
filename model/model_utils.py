@@ -8,7 +8,6 @@ from typing import Any
 
 import joblib
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 
 from fraud_pipeline.features import (
@@ -44,10 +43,25 @@ def _load_artifact(name: str):
 _model_cache: dict[str, Any] = {}
 
 
+def _get_model_type() -> str:
+    return os.environ.get("FRAUD_MODEL_TYPE", "xgb")
+
+
+def _model_filename(tag: str | None = None) -> str:
+    t = tag or _get_model_type()
+    return f"fraud_model_{t}.pkl"
+
+
+def _metadata_filename(tag: str | None = None) -> str:
+    t = tag or _get_model_type()
+    return f"model_metadata_{t}.json"
+
+
 def _get_model():
-    if "model" not in _model_cache:
-        _model_cache["model"] = _load_artifact("fraud_model_v1.pkl")
-    return _model_cache["model"]
+    key = f"model_{_get_model_type()}"
+    if key not in _model_cache:
+        _model_cache[key] = _load_artifact(_model_filename())
+    return _model_cache[key]
 
 
 def _get_scaler():
@@ -72,18 +86,19 @@ def _get_feature_columns():
 
 
 def _get_metadata():
-    if "metadata" not in _model_cache:
-        path = _model_path("model_metadata.json")
+    key = f"metadata_{_get_model_type()}"
+    if key not in _model_cache:
+        path = _model_path(_metadata_filename())
         if path.exists():
             try:
-                _model_cache["metadata"] = json.loads(path.read_text(encoding="utf-8"))
+                _model_cache[key] = json.loads(path.read_text(encoding="utf-8"))
             except Exception:
                 LOGGER.exception("Failed to read model metadata: %s", path)
-                _model_cache["metadata"] = None
+                _model_cache[key] = None
         else:
             LOGGER.warning("Model metadata file not found: %s", path)
-            _model_cache["metadata"] = None
-    return _model_cache["metadata"]
+            _model_cache[key] = None
+    return _model_cache[key]
 
 
 def _one_hot_txn_type(txn_type: str) -> dict[str, int]:
