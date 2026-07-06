@@ -10,12 +10,14 @@ import joblib
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 
-try:
-    import xgboost
-except ImportError:
-    pass
-
-from fraud_pipeline.features import FEATURE_COLUMNS, TXN_TYPE_CATEGORIES, build_feature_record
+from fraud_pipeline.features import (
+    FEATURE_COLUMNS,
+    TXN_TYPE_CATEGORIES,
+    BROWSER_CATEGORIES,
+    DEVICE_TYPE_CATEGORIES,
+    COUNTRY_CATEGORIES,
+    build_feature_record,
+)
 from fraud_pipeline.models import TransactionEvent
 
 MODEL_DIR = Path(__file__).resolve().parent
@@ -103,14 +105,29 @@ def _one_hot_txn_type(txn_type: str) -> dict[str, int]:
     return {f"type_{cat}": int(txn_type == cat) for cat in TXN_TYPE_CATEGORIES}
 
 
-def transform_event(event: TransactionEvent) -> np.ndarray | None:
+def _one_hot_browser(browser: str) -> dict[str, int]:
+    return {f"browser_{cat}": int(browser == cat) for cat in BROWSER_CATEGORIES}
+
+
+def _one_hot_device_type(device_type: str) -> dict[str, int]:
+    return {f"device_type_{cat}": int(device_type == cat) for cat in DEVICE_TYPE_CATEGORIES}
+
+
+def _one_hot_country(country: str) -> dict[str, int]:
+    return {f"country_{cat}": int(country == cat) for cat in COUNTRY_CATEGORIES}
+
+
+def transform_event(event: TransactionEvent, dynamic_features: dict[str, float] | None = None) -> np.ndarray | None:
     feature_columns = _get_feature_columns()
     if feature_columns is None:
         return None
 
-    record = build_feature_record(event)
+    record = build_feature_record(event, dynamic_features=dynamic_features)
     raw: dict[str, float] = {col: float(record[col]) for col in FEATURE_COLUMNS}
     raw.update(_one_hot_txn_type(record["txn_type"]))
+    raw.update(_one_hot_browser(record["browser"]))
+    raw.update(_one_hot_device_type(record["device_type"]))
+    raw.update(_one_hot_country(record["country"]))
 
     vec = np.array([raw.get(col, 0.0) for col in feature_columns], dtype=np.float64).reshape(1, -1)
 
@@ -121,17 +138,18 @@ def transform_event(event: TransactionEvent) -> np.ndarray | None:
     return vec
 
 
-def predict_proba(event: TransactionEvent) -> float:
+def predict_proba(event: TransactionEvent, dynamic_features: dict[str, float] | None = None) -> float:
     model = _get_model()
     if model is None:
         return 0.0
 
-    vec = transform_event(event)
+    vec = transform_event(event, dynamic_features=dynamic_features)
     if vec is None:
         return 0.0
 
     proba = model.predict_proba(vec)[0, 1]
     return round(float(proba), 4)
+
 
 
 def model_is_loaded() -> bool:

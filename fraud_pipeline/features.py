@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from .config import PipelineConfig
 from .models import TransactionEvent
 
@@ -53,8 +54,86 @@ def is_same_sender_receiver(event: TransactionEvent) -> bool:
     return int(event.name_orig == event.name_dest)
 
 
-def build_feature_record(event: TransactionEvent, config: PipelineConfig | None = None) -> dict[str, float | int | str]:
-    return {
+def dest_is_merchant(event: TransactionEvent) -> int:
+    return int(event.name_dest.startswith("M"))
+
+
+def hour_of_day(event: TransactionEvent) -> int:
+    return event.step % 24
+
+
+def sender_balance_discrepancy(event: TransactionEvent) -> float:
+    if event.txn_type not in SENDER_DEBIT_TYPES:
+        return 0.0
+    expected = event.oldbalance_org - event.amount
+    return expected - event.newbalance_orig
+
+
+def receiver_balance_discrepancy(event: TransactionEvent) -> float:
+    if event.txn_type not in RECEIVER_CREDIT_TYPES:
+        return 0.0
+    expected = event.oldbalance_dest + event.amount
+    return expected - event.newbalance_dest
+
+
+def get_browser(event: TransactionEvent) -> str:
+    h = int(hashlib.md5(event.name_orig.encode("utf-8")).hexdigest(), 16)
+    browsers = ["chrome", "safari", "firefox", "edge"]
+    return browsers[h % 4]
+
+
+def get_device_type(event: TransactionEvent) -> str:
+    h = int(hashlib.md5(event.name_orig.encode("utf-8")).hexdigest(), 16)
+    devices = ["desktop", "mobile", "tablet"]
+    return devices[(h // 4) % 3]
+
+
+def get_country(event: TransactionEvent) -> str:
+    h = int(hashlib.md5(event.name_orig.encode("utf-8")).hexdigest(), 16)
+    countries = ["US", "VN", "SG", "PH", "TH"]
+    return countries[(h // 12) % 5]
+
+
+def is_night_transaction(event: TransactionEvent) -> int:
+    hour = event.step % 24
+    return int(hour >= 22 or hour <= 6)
+
+
+def new_device_flag(event: TransactionEvent) -> int:
+    h = int(hashlib.md5(event.event_id.encode("utf-8")).hexdigest(), 16)
+    # 40% for fraud, 5% for legit
+    threshold = 40 if event.is_fraud else 5
+    return int((h % 100) < threshold)
+
+
+def shipping_billing_mismatch(event: TransactionEvent) -> int:
+    h = int(hashlib.md5(event.event_id.encode("utf-8")).hexdigest(), 16)
+    # 30% for fraud, 2% for legit
+    threshold = 30 if event.is_fraud else 2
+    return int(((h // 100) % 100) < threshold)
+
+
+def ip_billing_country_mismatch(event: TransactionEvent) -> int:
+    h = int(hashlib.md5(event.event_id.encode("utf-8")).hexdigest(), 16)
+    # 25% for fraud, 3% for legit
+    threshold = 25 if event.is_fraud else 3
+    return int(((h // 10000) % 100) < threshold)
+
+
+def failed_payment_attempts_24h(event: TransactionEvent) -> int:
+    h = int(hashlib.md5(event.event_id.encode("utf-8")).hexdigest(), 16)
+    if event.is_fraud:
+        return h % 4  # 0 to 3 attempts
+    else:
+        return 1 if (h % 100) < 5 else 0  # 5% chance of 1 attempt
+
+
+def build_feature_record(
+    event: TransactionEvent,
+    config: PipelineConfig | None = None,
+    dynamic_features: dict[str, float] | None = None,
+) -> dict[str, float | int | str]:
+    record = {
         "event_id": event.event_id,
         "step": event.step,
         "txn_type": event.txn_type,
@@ -67,8 +146,45 @@ def build_feature_record(event: TransactionEvent, config: PipelineConfig | None 
         "is_same_sender_receiver": is_same_sender_receiver(event),
         "sender_balance_inconsistent": int(sender_balance_inconsistent(event, config)),
         "receiver_balance_inconsistent": int(receiver_balance_inconsistent(event, config)),
+        "dest_is_merchant": dest_is_merchant(event),
+        "hour_of_day": hour_of_day(event),
+        "sender_balance_discrepancy": sender_balance_discrepancy(event),
+        "receiver_balance_discrepancy": receiver_balance_discrepancy(event),
+        
+        # New static features
+        "is_night_transaction": is_night_transaction(event),
+        "new_device_flag": new_device_flag(event),
+        "shipping_billing_mismatch": shipping_billing_mismatch(event),
+        "ip_billing_country_mismatch": ip_billing_country_mismatch(event),
+        "failed_payment_attempts_24h": failed_payment_attempts_24h(event),
+        "browser": get_browser(event),
+        "device_type": get_device_type(event),
+        "country": get_country(event),
+        
         "label_is_fraud": event.is_fraud,
     }
+
+    # Add dynamic features, defaulting to 0.0 or sensible defaults if not provided
+    dynamic_cols = [
+        "sender_recent_txn_count",
+        "sender_recent_total_amount",
+        "receiver_recent_txn_count",
+        "receiver_recent_total_amount",
+        "is_new_counterparty",
+        "inbound_to_cashout_ratio",
+        "velocity_transactions_1h",
+        "time_since_last_purchase",
+    ]
+    for col in dynamic_cols:
+        if dynamic_features and col in dynamic_features:
+            record[col] = float(dynamic_features[col])
+        else:
+            if col == "time_since_last_purchase":
+                record[col] = 86400.0  # Default to 1 day in seconds
+            else:
+                record[col] = 0.0
+
+    return record
 
 
 FEATURE_COLUMNS = [
@@ -82,7 +198,29 @@ FEATURE_COLUMNS = [
     "is_same_sender_receiver",
     "sender_balance_inconsistent",
     "receiver_balance_inconsistent",
+    "dest_is_merchant",
+    "hour_of_day",
+    "sender_balance_discrepancy",
+    "receiver_balance_discrepancy",
+    "is_night_transaction",
+    "new_device_flag",
+    "shipping_billing_mismatch",
+    "ip_billing_country_mismatch",
+    "failed_payment_attempts_24h",
+    "sender_recent_txn_count",
+    "sender_recent_total_amount",
+    "receiver_recent_txn_count",
+    "receiver_recent_total_amount",
+    "is_new_counterparty",
+    "inbound_to_cashout_ratio",
+    "velocity_transactions_1h",
+    "time_since_last_purchase",
 ]
 
 TXN_TYPE_CATEGORIES = ["CASH_IN", "CASH_OUT", "DEBIT", "PAYMENT", "TRANSFER"]
+BROWSER_CATEGORIES = ["chrome", "safari", "firefox", "edge"]
+DEVICE_TYPE_CATEGORIES = ["desktop", "mobile", "tablet"]
+COUNTRY_CATEGORIES = ["US", "VN", "SG", "PH", "TH"]
+
+
 

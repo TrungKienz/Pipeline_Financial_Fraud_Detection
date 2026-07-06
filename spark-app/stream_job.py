@@ -735,7 +735,7 @@ def load_recent_sender_events(
 ) -> list[TransactionEvent]:
     history_key = f"sender_history:{event.name_orig}"
     current_ts = int(event.event_time.timestamp())
-    lower_bound = current_ts - config.rapid_outflow_window_seconds
+    lower_bound = current_ts - max(config.rapid_outflow_window_seconds, 3600)
     try:
         redis_client.zremrangebyscore(history_key, 0, lower_bound - 1)
         members = redis_client.zrangebyscore(history_key, lower_bound, current_ts)
