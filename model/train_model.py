@@ -10,7 +10,20 @@ from pathlib import Path
 import joblib
 import numpy as np
 from imblearn.over_sampling import SMOTE
-from sklearn.ensemble import RandomForestClassifier
+
+
+def _to_native(obj):
+    if isinstance(obj, dict):
+        return {k: _to_native(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_to_native(v) for v in obj]
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    return obj
 from sklearn.metrics import (
     auc,
     classification_report,
@@ -21,6 +34,18 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
+
+MODEL_REGISTRY: dict[str, type] = {}
+try:
+    from sklearn.ensemble import RandomForestClassifier
+    MODEL_REGISTRY["rf"] = RandomForestClassifier
+except ImportError:
+    pass
+try:
+    from xgboost import XGBClassifier
+    MODEL_REGISTRY["xgb"] = XGBClassifier
+except ImportError:
+    pass
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -181,7 +206,57 @@ def tune_threshold(y_val: np.ndarray, y_prob_val: np.ndarray) -> tuple[float, fl
     return thresholds[best_idx], f1_scores[best_idx], precisions[best_idx], recalls[best_idx], auc(recalls, precisions)
 
 
-def train_model(X_train, y_train, X_val, y_val, X_test, y_test, feature_cols):
+def _build_model(model_type: str, n_samples: int, n_pos: int) -> tuple:
+    if model_type == "rf":
+        print(f"\n[STEP] Training Random Forest...")
+        model = RandomForestClassifier(
+            n_estimators=100,
+            max_depth=15,
+            min_samples_leaf=5,
+            class_weight="balanced",
+            random_state=42,
+            n_jobs=-1,
+            verbose=0,
+        )
+        hyperparams = {
+            "n_estimators": 100,
+            "max_depth": 15,
+            "min_samples_leaf": 5,
+            "class_weight": "balanced",
+        }
+        model_name = "RandomForestClassifier"
+        model_version_tag = "rf"
+    elif model_type == "xgb":
+        print(f"\n[STEP] Training XGBoost...")
+        scale_pos_weight = (n_samples - n_pos) / max(n_pos, 1)
+        model = XGBClassifier(
+            n_estimators=100,
+            max_depth=6,
+            learning_rate=0.1,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            scale_pos_weight=scale_pos_weight,
+            random_state=42,
+            n_jobs=-1,
+            verbosity=0,
+            eval_metric="logloss",
+        )
+        hyperparams = {
+            "n_estimators": 100,
+            "max_depth": 6,
+            "learning_rate": 0.1,
+            "subsample": 0.8,
+            "colsample_bytree": 0.8,
+            "scale_pos_weight": round(scale_pos_weight, 2),
+        }
+        model_name = "XGBClassifier"
+        model_version_tag = "xgb"
+    else:
+        raise ValueError(f"Unknown model_type: {model_type!r}")
+    return model, hyperparams, model_name, model_version_tag
+
+
+def train_model(X_train, y_train, X_val, y_val, X_test, y_test, feature_cols, model_type="rf"):
     print("\n" + "=" * 60)
     print("TRAINING")
     print("=" * 60)
@@ -200,23 +275,17 @@ def train_model(X_train, y_train, X_val, y_val, X_test, y_test, feature_cols):
     print(f"  Train before SMOTE: {len(X_train):,} ({n_fraud_train:,} fraud)")
     print(f"  Train after SMOTE:  {len(X_train_res):,} ({n_resampled:,} fraud, {n_resampled/len(X_train_res)*100:.1f}%)")
 
-    print(f"\n[STEP] Training Random Forest...")
-    rf = RandomForestClassifier(
-        n_estimators=100,
-        max_depth=15,
-        min_samples_leaf=5,
-        class_weight="balanced",
-        random_state=42,
-        n_jobs=-1,
-        verbose=0,
+    model, hyperparams, model_name, model_version_tag = _build_model(
+        model_type, len(X_train), n_fraud_train
     )
+
     start = time.time()
-    rf.fit(X_train_res, y_train_res)
+    model.fit(X_train_res, y_train_res)
     elapsed = time.time() - start
     print(f"  Training completed in {elapsed:.2f}s")
 
     print(f"\n[STEP] Tuning threshold on validation set ({len(y_val):,} samples)...")
-    y_prob_val = rf.predict_proba(X_val)[:, 1]
+    y_prob_val = model.predict_proba(X_val)[:, 1]
     best_threshold, val_f1, val_precision, val_recall, val_auc_pr = tune_threshold(y_val, y_prob_val)
     print(f"  Validation AUC-PR: {val_auc_pr:.4f}")
     print(f"  Optimal threshold:  {best_threshold:.4f}")
@@ -225,7 +294,7 @@ def train_model(X_train, y_train, X_val, y_val, X_test, y_test, feature_cols):
     print(f"  Val Recall:         {val_recall:.4f}")
 
     print(f"\n[STEP] Final evaluation on held-out test set ({len(y_test):,} samples)...")
-    y_prob_test = rf.predict_proba(X_test)[:, 1]
+    y_prob_test = model.predict_proba(X_test)[:, 1]
     auc_roc = roc_auc_score(y_test, y_prob_test)
     auc_pr = auc(*(precision_recall_curve(y_test, y_prob_test)[:2][::-1]))
 
@@ -289,14 +358,14 @@ def train_model(X_train, y_train, X_val, y_val, X_test, y_test, feature_cols):
         plt.close()
         print("[PLOT] Saved confusion_matrix.png")
 
-        importances = rf.feature_importances_
+        importances = model.feature_importances_
         indices = np.argsort(importances)[::-1]
         plt.figure(figsize=(12, 8))
         colors = plt.cm.Blues(np.linspace(0.4, 1, len(indices)))
         plt.barh(range(len(indices)), importances[indices][::-1], color=colors[::-1])
         plt.yticks(range(len(indices)), [feature_cols[i] for i in indices[::-1]])
         plt.xlabel("Feature Importance", fontsize=12)
-        plt.title("Random Forest Feature Importance", fontsize=14, fontweight="bold")
+        plt.title(f"{model_name} Feature Importance", fontsize=14, fontweight="bold")
         plt.tight_layout()
         plt.savefig(str(PLOTS_DIR / "feature_importance.png"), dpi=100)
         plt.close()
@@ -306,6 +375,8 @@ def train_model(X_train, y_train, X_val, y_val, X_test, y_test, feature_cols):
         print("[WARN] matplotlib not available, skipping evaluation plots")
 
     metrics = {
+        "model_type": model_name,
+        "hyperparameters": hyperparams,
         "auc_roc": round(float(auc_roc), 4),
         "auc_pr": round(float(auc_pr), 4),
         "optimal_threshold": round(float(best_threshold), 4),
@@ -325,16 +396,18 @@ def train_model(X_train, y_train, X_val, y_val, X_test, y_test, feature_cols):
         },
     }
 
-    return rf, best_threshold, metrics
+    return model, best_threshold, metrics, model_version_tag
 
 
-def export_model(rf, scaler, feature_cols, metrics, threshold):
+def export_model(model, scaler, feature_cols, metrics, threshold, model_version_tag="rf"):
+    model_name = metrics.get("model_type", "Unknown")
     print("\n" + "=" * 60)
     print("EXPORTING MODEL ARTIFACTS")
     print("=" * 60)
 
-    model_path = MODEL_DIR / "fraud_model_v1.pkl"
-    joblib.dump(rf, str(model_path))
+    model_filename = f"fraud_model_{model_version_tag}.pkl"
+    model_path = MODEL_DIR / model_filename
+    joblib.dump(model, str(model_path))
     print(f"[EXPORT] Model saved to {model_path}")
 
     scaler_path = MODEL_DIR / "scaler.pkl"
@@ -345,27 +418,24 @@ def export_model(rf, scaler, feature_cols, metrics, threshold):
     cols_path.write_text(json.dumps(feature_cols, indent=2), encoding="utf-8")
     print(f"[EXPORT] Feature columns saved to {cols_path}")
 
-    metadata = {
-        "model_version": "v1_paysim_rf",
-        "model_type": "RandomForestClassifier",
-        "n_estimators": 100,
-        "max_depth": 15,
-        "min_samples_leaf": 5,
-        "class_weight": "balanced",
+    metadata = _to_native({
+        "model_version": f"v1_paysim_{model_version_tag}",
+        "model_type": model_name,
         "feature_columns": feature_cols,
         "optimal_threshold": threshold,
         "metrics": metrics,
-    }
-    meta_path = MODEL_DIR / "model_metadata.json"
+    })
+    meta_filename = f"model_metadata_{model_version_tag}.json"
+    meta_path = MODEL_DIR / meta_filename
     meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     print(f"[EXPORT] Metadata saved to {meta_path}")
 
-    results = {
+    results = _to_native({
         "metrics": metrics,
         "optimal_threshold": threshold,
-        "model_version": "v1_paysim_rf",
+        "model_version": f"v1_paysim_{model_version_tag}",
         "plots": [p.name for p in PLOTS_DIR.glob("*.png")],
-    }
+    })
     eval_path = MODEL_DIR / "eval_results.json"
     eval_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
     print(f"[EXPORT] Evaluation results saved to {eval_path}")
@@ -407,6 +477,12 @@ def parse_args():
     parser.add_argument("--val-ratio", type=float, default=0.20, help="Validation set ratio (default: 0.20)")
     parser.add_argument("--test-ratio", type=float, default=0.20, help="Test set ratio (default: 0.20)")
     parser.add_argument("--skip-eda", action="store_true", help="Skip EDA phase")
+    parser.add_argument(
+        "--model-type",
+        choices=list(MODEL_REGISTRY.keys()),
+        default="xgb",
+        help=f"Model type to train (default: xgb). Available: {', '.join(MODEL_REGISTRY)}",
+    )
     return parser.parse_args()
 
 
@@ -449,11 +525,12 @@ def main():
     X_val_scaled = scaler.transform(X_val)
     X_test_scaled = scaler.transform(X_test)
 
-    rf_model, best_threshold, metrics = train_model(
-        X_train_scaled, y_train, X_val_scaled, y_val, X_test_scaled, y_test, feature_cols
+    model, best_threshold, metrics, model_version_tag = train_model(
+        X_train_scaled, y_train, X_val_scaled, y_val, X_test_scaled, y_test,
+        feature_cols, model_type=args.model_type,
     )
 
-    export_model(rf_model, scaler, feature_cols, metrics, best_threshold)
+    export_model(model, scaler, feature_cols, metrics, best_threshold, model_version_tag)
 
     test_csv_path = MODEL_DIR / "test_set.csv"
     export_test_csv(events_test, test_csv_path)
@@ -461,7 +538,9 @@ def main():
     print("\n" + "=" * 60)
     print("TRAINING PIPELINE COMPLETED SUCCESSFULLY")
     print("=" * 60)
-    print(f"\nModel version: v1_paysim_rf")
+    model_version = f"v1_paysim_{model_version_tag}"
+    print(f"\nModel type:     {metrics['model_type']}")
+    print(f"Model version:  {model_version}")
     print(f"Optimal threshold: {best_threshold:.4f} (tuned on validation set)")
     print(f"Test AUC-ROC: {metrics['auc_roc']:.4f}")
     print(f"Test AUC-PR:  {metrics['auc_pr']:.4f}")
