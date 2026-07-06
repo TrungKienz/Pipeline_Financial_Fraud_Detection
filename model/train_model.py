@@ -25,17 +25,23 @@ def _to_native(obj):
         return bool(obj)
     return obj
 from sklearn.metrics import (
-    auc,
+    average_precision_score,
     classification_report,
     confusion_matrix,
+    f1_score,
+    precision_score,
     precision_recall_curve,
+    recall_score,
     roc_auc_score,
     roc_curve,
 )
+from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
 MODEL_REGISTRY: dict[str, type] = {}
+MODEL_ORDER = ["logreg", "rf", "xgb", "lgbm"]
+MODEL_REGISTRY["logreg"] = LogisticRegression
 try:
     from sklearn.ensemble import RandomForestClassifier
     MODEL_REGISTRY["rf"] = RandomForestClassifier
@@ -44,6 +50,11 @@ except ImportError:
 try:
     from xgboost import XGBClassifier
     MODEL_REGISTRY["xgb"] = XGBClassifier
+except ImportError:
+    pass
+try:
+    from lightgbm import LGBMClassifier
+    MODEL_REGISTRY["lgbm"] = LGBMClassifier
 except ImportError:
     pass
 
@@ -325,15 +336,173 @@ def run_eda(X: np.ndarray, y: np.ndarray, txn_types: list[str], feature_cols: li
     print(f"[INFO] EDA summary saved to {eda_path}")
 
 
-def tune_threshold(y_val: np.ndarray, y_prob_val: np.ndarray) -> tuple[float, float, float, float, float]:
+def _round_metric(value: float | None, digits: int = 4):
+    if value is None:
+        return None
+    if not np.isfinite(value):
+        return None
+    return round(float(value), digits)
+
+
+def _format_metric(value: float | None, digits: int = 4) -> str:
+    if value is None:
+        return "n/a"
+    return f"{float(value):.{digits}f}"
+
+
+def business_cost_breakdown(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    amounts: np.ndarray,
+    false_alarm_unit_cost: float = 5.0,
+) -> dict[str, float | int]:
+    y_true = np.asarray(y_true, dtype=np.int32)
+    y_pred = np.asarray(y_pred, dtype=np.int32)
+    amounts = np.asarray(amounts, dtype=np.float64)
+
+    fn_mask = (y_true == 1) & (y_pred == 0)
+    fp_mask = (y_true == 0) & (y_pred == 1)
+
+    missed_fraud_cost = float(amounts[fn_mask].sum())
+    false_positives = int(fp_mask.sum())
+    false_alarm_total_cost = float(false_alarm_unit_cost * false_positives)
+    business_cost = missed_fraud_cost + false_alarm_total_cost
+
+    no_model_baseline_cost = float(amounts[y_true == 1].sum())
+    net_cost_savings = no_model_baseline_cost - business_cost
+    savings_rate = net_cost_savings / no_model_baseline_cost if no_model_baseline_cost > 0 else 0.0
+
+    return {
+        "business_cost": round(business_cost, 2),
+        "missed_fraud_cost": round(missed_fraud_cost, 2),
+        "false_alarm_total_cost": round(false_alarm_total_cost, 2),
+        "false_alarm_unit_cost": round(float(false_alarm_unit_cost), 2),
+        "no_model_baseline_cost": round(no_model_baseline_cost, 2),
+        "net_cost_savings": round(net_cost_savings, 2),
+        "savings_rate": round(float(savings_rate), 4),
+        "false_positives": false_positives,
+        "false_negatives": int(fn_mask.sum()),
+    }
+
+
+def tune_threshold_by_f1(y_val: np.ndarray, y_prob_val: np.ndarray) -> dict[str, float | None]:
     precisions, recalls, thresholds = precision_recall_curve(y_val, y_prob_val)
+    auc_pr = average_precision_score(y_val, y_prob_val) if int(np.sum(y_val)) > 0 else 0.0
+    if len(thresholds) == 0:
+        return {
+            "threshold": 0.5,
+            "f1": 0.0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "auc_pr": _round_metric(auc_pr),
+        }
+
     f1_scores = 2 * (precisions[:-1] * recalls[:-1]) / (precisions[:-1] + recalls[:-1] + 1e-8)
     best_idx = int(np.argmax(f1_scores))
-    return thresholds[best_idx], f1_scores[best_idx], precisions[best_idx], recalls[best_idx], auc(recalls, precisions)
+    return {
+        "threshold": float(thresholds[best_idx]),
+        "f1": float(f1_scores[best_idx]),
+        "precision": float(precisions[best_idx]),
+        "recall": float(recalls[best_idx]),
+        "auc_pr": _round_metric(auc_pr),
+    }
+
+
+def tune_threshold_by_business_cost(
+    y_val: np.ndarray,
+    y_prob_val: np.ndarray,
+    amounts_val: np.ndarray,
+    false_alarm_unit_cost: float = 5.0,
+) -> dict[str, float | int]:
+    y_val = np.asarray(y_val, dtype=np.int32)
+    y_prob_val = np.asarray(y_prob_val, dtype=np.float64)
+    amounts_val = np.asarray(amounts_val, dtype=np.float64)
+
+    baseline_cost = float(amounts_val[y_val == 1].sum())
+    if len(y_prob_val) == 0:
+        return {
+            "threshold": 1.000001,
+            "evaluated_thresholds": 1,
+            **business_cost_breakdown(y_val, np.zeros_like(y_val), amounts_val, false_alarm_unit_cost),
+        }
+
+    order = np.argsort(y_prob_val)[::-1]
+    scores = y_prob_val[order]
+    labels = y_val[order]
+    amounts = amounts_val[order]
+
+    fraud_amounts = np.where(labels == 1, amounts, 0.0)
+    false_positive_flags = (labels == 0).astype(np.int64)
+    cumulative_detected_fraud_amount = np.cumsum(fraud_amounts)
+    cumulative_false_positives = np.cumsum(false_positive_flags)
+
+    change_indices = np.flatnonzero(scores[:-1] != scores[1:])
+    threshold_end_indices = np.r_[change_indices, len(scores) - 1]
+    candidate_thresholds = scores[threshold_end_indices]
+    candidate_costs = (
+        baseline_cost
+        - cumulative_detected_fraud_amount[threshold_end_indices]
+        + false_alarm_unit_cost * cumulative_false_positives[threshold_end_indices]
+    )
+
+    no_alert_threshold = float(np.nextafter(float(scores[0]), np.inf))
+    all_thresholds = np.r_[no_alert_threshold, candidate_thresholds]
+    all_costs = np.r_[baseline_cost, candidate_costs]
+
+    best_idx = int(np.argmin(all_costs))
+    best_threshold = float(all_thresholds[best_idx])
+    y_pred = (y_prob_val >= best_threshold).astype(np.int32)
+    return {
+        "threshold": best_threshold,
+        "evaluated_thresholds": int(len(all_thresholds)),
+        **business_cost_breakdown(y_val, y_pred, amounts_val, false_alarm_unit_cost),
+    }
+
+
+def evaluate_at_threshold(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+    amounts: np.ndarray,
+    threshold: float,
+    false_alarm_unit_cost: float = 5.0,
+) -> dict[str, object]:
+    y_pred = (y_prob >= threshold).astype(np.int32)
+    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+    auc_roc = roc_auc_score(y_true, y_prob) if len(np.unique(y_true)) == 2 else None
+    auc_pr = average_precision_score(y_true, y_prob) if int(np.sum(y_true)) > 0 else 0.0
+
+    metrics = {
+        "threshold": round(float(threshold), 6),
+        "auc_roc": _round_metric(auc_roc),
+        "auc_pr": _round_metric(auc_pr),
+        "precision": _round_metric(precision_score(y_true, y_pred, zero_division=0)),
+        "recall": _round_metric(recall_score(y_true, y_pred, zero_division=0)),
+        "f1_score": _round_metric(f1_score(y_true, y_pred, zero_division=0)),
+        "confusion_matrix": {
+            "tn": int(cm[0, 0]), "fp": int(cm[0, 1]),
+            "fn": int(cm[1, 0]), "tp": int(cm[1, 1]),
+        },
+    }
+    metrics.update(business_cost_breakdown(y_true, y_pred, amounts, false_alarm_unit_cost))
+    return metrics
 
 
 def _build_model(model_type: str, n_samples: int, n_pos: int) -> tuple:
-    if model_type == "rf":
+    if model_type == "logreg":
+        print(f"\n[STEP] Training Logistic Regression...")
+        model = LogisticRegression(
+            max_iter=1000,
+            class_weight="balanced",
+            random_state=42,
+            n_jobs=-1,
+        )
+        hyperparams = {
+            "max_iter": 1000,
+            "class_weight": "balanced",
+        }
+        model_name = "LogisticRegression"
+        model_version_tag = "logreg"
+    elif model_type == "rf":
         print(f"\n[STEP] Training Random Forest...")
         model = RandomForestClassifier(
             n_estimators=100,
@@ -377,14 +546,74 @@ def _build_model(model_type: str, n_samples: int, n_pos: int) -> tuple:
         }
         model_name = "XGBClassifier"
         model_version_tag = "xgb"
+    elif model_type == "lgbm":
+        print(f"\n[STEP] Training LightGBM...")
+        scale_pos_weight = (n_samples - n_pos) / max(n_pos, 1)
+        model = LGBMClassifier(
+            n_estimators=200,
+            max_depth=-1,
+            num_leaves=31,
+            learning_rate=0.05,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            scale_pos_weight=scale_pos_weight,
+            random_state=42,
+            n_jobs=-1,
+            verbosity=-1,
+        )
+        hyperparams = {
+            "n_estimators": 200,
+            "max_depth": -1,
+            "num_leaves": 31,
+            "learning_rate": 0.05,
+            "subsample": 0.8,
+            "colsample_bytree": 0.8,
+            "scale_pos_weight": round(scale_pos_weight, 2),
+        }
+        model_name = "LGBMClassifier"
+        model_version_tag = "lgbm"
     else:
         raise ValueError(f"Unknown model_type: {model_type!r}")
     return model, hyperparams, model_name, model_version_tag
 
 
-def train_model(X_train, y_train, X_val, y_val, X_test, y_test, feature_cols, model_type="rf"):
+def _resample_training_data(X_train: np.ndarray, y_train: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    n_fraud_train = int(y_train.sum())
+    n_legit_train = int(len(y_train) - n_fraud_train)
+    if n_fraud_train < 2 or n_legit_train == 0:
+        print("[WARN] Skipping SMOTE: not enough minority/majority samples")
+        return X_train, y_train
+
+    current_ratio = n_fraud_train / max(n_legit_train, 1)
+    if current_ratio >= 0.1:
+        print(f"[INFO] Skipping SMOTE: minority/majority ratio already {current_ratio:.3f}")
+        return X_train, y_train
+
+    print(f"\n[STEP] Applying SMOTE on training set...")
+    smote = SMOTE(sampling_strategy=0.1, random_state=42, k_neighbors=min(5, n_fraud_train - 1))
+    X_train_res, y_train_res = smote.fit_resample(X_train, y_train)
+    n_resampled = int(y_train_res.sum())
+    print(f"  Train before SMOTE: {len(X_train):,} ({n_fraud_train:,} fraud)")
+    print(f"  Train after SMOTE:  {len(X_train_res):,} ({n_resampled:,} fraud, {n_resampled/len(X_train_res)*100:.1f}%)")
+    return X_train_res, y_train_res
+
+
+def train_model(
+    X_train,
+    y_train,
+    X_val,
+    y_val,
+    X_test,
+    y_test,
+    amounts_val,
+    amounts_test,
+    feature_cols,
+    model_type="rf",
+    false_alarm_unit_cost: float = 5.0,
+    resampled_train: tuple[np.ndarray, np.ndarray] | None = None,
+):
     print("\n" + "=" * 60)
-    print("TRAINING")
+    print(f"TRAINING: {model_type}")
     print("=" * 60)
 
     n_fraud_train = int(y_train.sum())
@@ -394,12 +623,12 @@ def train_model(X_train, y_train, X_val, y_val, X_test, y_test, feature_cols, mo
     print(f"Val:   {len(y_val):,} samples ({n_fraud_val:,} fraud, {n_fraud_val/len(y_val)*100:.3f}%)")
     print(f"Test:  {len(y_test):,} samples ({n_fraud_test:,} fraud, {n_fraud_test/len(y_test)*100:.3f}%)")
 
-    print(f"\n[STEP] Applying SMOTE on training set...")
-    smote = SMOTE(sampling_strategy=0.1, random_state=42)
-    X_train_res, y_train_res = smote.fit_resample(X_train, y_train)
-    n_resampled = int(y_train_res.sum())
-    print(f"  Train before SMOTE: {len(X_train):,} ({n_fraud_train:,} fraud)")
-    print(f"  Train after SMOTE:  {len(X_train_res):,} ({n_resampled:,} fraud, {n_resampled/len(X_train_res)*100:.1f}%)")
+    if resampled_train is None:
+        X_train_res, y_train_res = _resample_training_data(X_train, y_train)
+    else:
+        X_train_res, y_train_res = resampled_train
+        n_resampled = int(y_train_res.sum())
+        print(f"[INFO] Using shared training sample: {len(X_train_res):,} rows ({n_resampled:,} fraud)")
 
     model, hyperparams, model_name, model_version_tag = _build_model(
         model_type, len(X_train), n_fraud_train
@@ -410,32 +639,62 @@ def train_model(X_train, y_train, X_val, y_val, X_test, y_test, feature_cols, mo
     elapsed = time.time() - start
     print(f"  Training completed in {elapsed:.2f}s")
 
-    print(f"\n[STEP] Tuning threshold on validation set ({len(y_val):,} samples)...")
+    print(f"\n[STEP] Tuning threshold by business cost on validation set ({len(y_val):,} samples)...")
     y_prob_val = model.predict_proba(X_val)[:, 1]
-    best_threshold, val_f1, val_precision, val_recall, val_auc_pr = tune_threshold(y_val, y_prob_val)
-    print(f"  Validation AUC-PR: {val_auc_pr:.4f}")
-    print(f"  Optimal threshold:  {best_threshold:.4f}")
-    print(f"  Val F1:             {val_f1:.4f}")
-    print(f"  Val Precision:      {val_precision:.4f}")
-    print(f"  Val Recall:         {val_recall:.4f}")
+    cost_threshold = tune_threshold_by_business_cost(
+        y_val,
+        y_prob_val,
+        amounts_val,
+        false_alarm_unit_cost=false_alarm_unit_cost,
+    )
+    f1_threshold = tune_threshold_by_f1(y_val, y_prob_val)
+    best_threshold = float(cost_threshold["threshold"])
+    val_metrics = evaluate_at_threshold(
+        y_val,
+        y_prob_val,
+        amounts_val,
+        best_threshold,
+        false_alarm_unit_cost=false_alarm_unit_cost,
+    )
+    print(f"  Validation AUC-PR:       {val_metrics['auc_pr']:.4f}")
+    print(f"  Business-cost threshold: {best_threshold:.6f}")
+    print(f"  Validation business cost: {val_metrics['business_cost']:.2f}")
+    print(f"  No-model baseline cost:   {val_metrics['no_model_baseline_cost']:.2f}")
+    print(f"  Net cost savings:         {val_metrics['net_cost_savings']:.2f} ({val_metrics['savings_rate']:.2%})")
+    print(f"  Val Precision/Recall/F1:  {val_metrics['precision']:.4f} / {val_metrics['recall']:.4f} / {val_metrics['f1_score']:.4f}")
+    print(f"  Best-F1 threshold:        {float(f1_threshold['threshold']):.6f} (F1={float(f1_threshold['f1']):.4f})")
 
     print(f"\n[STEP] Final evaluation on held-out test set ({len(y_test):,} samples)...")
     y_prob_test = model.predict_proba(X_test)[:, 1]
-    auc_roc = roc_auc_score(y_test, y_prob_test)
-    auc_pr = auc(*(precision_recall_curve(y_test, y_prob_test)[:2][::-1]))
-
     y_pred_opt = (y_prob_test >= best_threshold).astype(int)
-    cm = confusion_matrix(y_test, y_pred_opt)
-    test_f1 = 2 * cm[1, 1] / (2 * cm[1, 1] + cm[0, 1] + cm[1, 0] + 1e-8)
+    test_metrics = evaluate_at_threshold(
+        y_test,
+        y_prob_test,
+        amounts_test,
+        best_threshold,
+        false_alarm_unit_cost=false_alarm_unit_cost,
+    )
+    cm = test_metrics["confusion_matrix"]
 
-    print(f"\n  Test AUC-ROC: {auc_roc:.4f}")
-    print(f"  Test AUC-PR:  {auc_pr:.4f}")
-    print(f"  Test F1:      {test_f1:.4f}")
+    print(f"\n  Test AUC-ROC:       {_format_metric(test_metrics['auc_roc'])}")
+    print(f"  Test AUC-PR:        {_format_metric(test_metrics['auc_pr'])}")
+    print(f"  Test Precision:     {test_metrics['precision']:.4f}")
+    print(f"  Test Recall:        {test_metrics['recall']:.4f}")
+    print(f"  Test F1:            {test_metrics['f1_score']:.4f}")
+    print(f"  Test Business Cost: {test_metrics['business_cost']:.2f}")
+    print(f"  Test Cost Savings:  {test_metrics['net_cost_savings']:.2f} ({test_metrics['savings_rate']:.2%})")
     print(f"\n  Confusion Matrix (threshold={best_threshold:.4f}):")
-    print(f"    TN={cm[0, 0]:,}  FP={cm[0, 1]:,}")
-    print(f"    FN={cm[1, 0]:,}  TP={cm[1, 1]:,}")
+    print(f"    TN={cm['tn']:,}  FP={cm['fp']:,}")
+    print(f"    FN={cm['fn']:,}  TP={cm['tp']:,}")
     print(f"\n  Classification Report:")
-    print(classification_report(y_test, y_pred_opt, target_names=["Legit", "Fraud"], digits=4))
+    print(classification_report(
+        y_test,
+        y_pred_opt,
+        labels=[0, 1],
+        target_names=["Legit", "Fraud"],
+        digits=4,
+        zero_division=0,
+    ))
 
     try:
         import matplotlib
@@ -444,82 +703,100 @@ def train_model(X_train, y_train, X_val, y_val, X_test, y_test, feature_cols, mo
 
         plt.figure(figsize=(8, 6))
         precisions, recalls, _ = precision_recall_curve(y_test, y_prob_test)
-        plt.plot(recalls, precisions, color="#4dabf7", linewidth=2, label=f"PR curve (AUC={auc_pr:.3f})")
-        plt.scatter([recalls[np.argmax(2*precisions[:-1]*recalls[:-1]/(precisions[:-1]+recalls[:-1]+1e-8))]],
-                    [precisions[np.argmax(2*precisions[:-1]*recalls[:-1]/(precisions[:-1]+recalls[:-1]+1e-8))]],
-                    color="#ff6b6b", s=100, zorder=5, label=f"Optimal threshold={best_threshold:.3f}")
+        plt.plot(recalls, precisions, color="#4dabf7", linewidth=2, label=f"PR curve (AUC={test_metrics['auc_pr']:.3f})")
+        plt.scatter([test_metrics["recall"]], [test_metrics["precision"]],
+                    color="#ff6b6b", s=100, zorder=5, label=f"Business threshold={best_threshold:.3f}")
         plt.xlabel("Recall", fontsize=12)
         plt.ylabel("Precision", fontsize=12)
-        plt.title("Precision-Recall Curve (Test Set)", fontsize=14, fontweight="bold")
+        plt.title(f"Precision-Recall Curve - {model_name} (Test Set)", fontsize=14, fontweight="bold")
         plt.legend()
         plt.grid(alpha=0.3)
         plt.tight_layout()
-        plt.savefig(str(PLOTS_DIR / "pr_curve.png"), dpi=100)
+        plt.savefig(str(PLOTS_DIR / f"pr_curve_{model_version_tag}.png"), dpi=100)
         plt.close()
-        print("[PLOT] Saved pr_curve.png")
+        print(f"[PLOT] Saved pr_curve_{model_version_tag}.png")
 
-        fpr, tpr, _ = roc_curve(y_test, y_prob_test)
-        plt.figure(figsize=(8, 6))
-        plt.plot(fpr, tpr, color="#4dabf7", linewidth=2, label=f"ROC curve (AUC={auc_roc:.3f})")
-        plt.plot([0, 1], [0, 1], "k--", alpha=0.5)
-        plt.xlabel("False Positive Rate", fontsize=12)
-        plt.ylabel("True Positive Rate", fontsize=12)
-        plt.title("ROC Curve (Test Set)", fontsize=14, fontweight="bold")
-        plt.legend()
-        plt.grid(alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(str(PLOTS_DIR / "roc_curve.png"), dpi=100)
-        plt.close()
-        print("[PLOT] Saved roc_curve.png")
+        if test_metrics["auc_roc"] is not None:
+            fpr, tpr, _ = roc_curve(y_test, y_prob_test)
+            plt.figure(figsize=(8, 6))
+            plt.plot(fpr, tpr, color="#4dabf7", linewidth=2, label=f"ROC curve (AUC={test_metrics['auc_roc']:.3f})")
+            plt.plot([0, 1], [0, 1], "k--", alpha=0.5)
+            plt.xlabel("False Positive Rate", fontsize=12)
+            plt.ylabel("True Positive Rate", fontsize=12)
+            plt.title(f"ROC Curve - {model_name} (Test Set)", fontsize=14, fontweight="bold")
+            plt.legend()
+            plt.grid(alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(str(PLOTS_DIR / f"roc_curve_{model_version_tag}.png"), dpi=100)
+            plt.close()
+            print(f"[PLOT] Saved roc_curve_{model_version_tag}.png")
 
         import seaborn as sns
         plt.figure(figsize=(6, 5))
-        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=["Legit", "Fraud"],
+        cm_array = np.array([[cm["tn"], cm["fp"]], [cm["fn"], cm["tp"]]])
+        sns.heatmap(cm_array, annot=True, fmt="d", cmap="Blues", xticklabels=["Legit", "Fraud"],
                     yticklabels=["Legit", "Fraud"])
-        plt.title(f"Confusion Matrix (threshold={best_threshold:.3f})", fontsize=14, fontweight="bold")
+        plt.title(f"{model_name} Confusion Matrix (threshold={best_threshold:.3f})", fontsize=14, fontweight="bold")
         plt.ylabel("Actual")
         plt.xlabel("Predicted")
         plt.tight_layout()
-        plt.savefig(str(PLOTS_DIR / "confusion_matrix.png"), dpi=100)
+        plt.savefig(str(PLOTS_DIR / f"confusion_matrix_{model_version_tag}.png"), dpi=100)
         plt.close()
-        print("[PLOT] Saved confusion_matrix.png")
+        print(f"[PLOT] Saved confusion_matrix_{model_version_tag}.png")
 
-        importances = model.feature_importances_
-        indices = np.argsort(importances)[::-1]
-        plt.figure(figsize=(12, 8))
-        colors = plt.cm.Blues(np.linspace(0.4, 1, len(indices)))
-        plt.barh(range(len(indices)), importances[indices][::-1], color=colors[::-1])
-        plt.yticks(range(len(indices)), [feature_cols[i] for i in indices[::-1]])
-        plt.xlabel("Feature Importance", fontsize=12)
-        plt.title(f"{model_name} Feature Importance", fontsize=14, fontweight="bold")
-        plt.tight_layout()
-        plt.savefig(str(PLOTS_DIR / "feature_importance.png"), dpi=100)
-        plt.close()
-        print("[PLOT] Saved feature_importance.png")
+        importances = None
+        importance_label = "Feature Importance"
+        if hasattr(model, "feature_importances_"):
+            importances = model.feature_importances_
+        elif hasattr(model, "coef_"):
+            importances = np.abs(model.coef_[0])
+            importance_label = "Absolute Coefficient"
+        if importances is not None:
+            indices = np.argsort(importances)[::-1][:25]
+            plt.figure(figsize=(12, 8))
+            colors = plt.cm.Blues(np.linspace(0.4, 1, len(indices)))
+            plt.barh(range(len(indices)), importances[indices][::-1], color=colors[::-1])
+            plt.yticks(range(len(indices)), [feature_cols[i] for i in indices[::-1]])
+            plt.xlabel(importance_label, fontsize=12)
+            plt.title(f"{model_name} Top Features", fontsize=14, fontweight="bold")
+            plt.tight_layout()
+            plt.savefig(str(PLOTS_DIR / f"feature_importance_{model_version_tag}.png"), dpi=100)
+            plt.close()
+            print(f"[PLOT] Saved feature_importance_{model_version_tag}.png")
 
     except ImportError:
-        print("[WARN] matplotlib not available, skipping evaluation plots")
+        print("[WARN] matplotlib/seaborn not available, skipping evaluation plots")
+    except Exception as exc:
+        print(f"[WARN] Failed to generate evaluation plots for {model_name}: {exc}")
 
     metrics = {
+        "model_tag": model_version_tag,
         "model_type": model_name,
         "hyperparameters": hyperparams,
-        "auc_roc": round(float(auc_roc), 4),
-        "auc_pr": round(float(auc_pr), 4),
-        "optimal_threshold": round(float(best_threshold), 4),
-        "f1_score": round(float(test_f1), 4),
-        "precision": round(float(cm[1, 1] / max(cm[1, 1] + cm[0, 1], 1)), 4),
-        "recall": round(float(cm[1, 1] / max(cm[1, 1] + cm[1, 0], 1)), 4),
+        "threshold_selection_metric": "minimum_validation_business_cost",
+        "cost_formula": "sum(amount_i for false negatives) + false_alarm_unit_cost * false_positives",
+        "false_alarm_unit_cost": round(float(false_alarm_unit_cost), 2),
+        "optimal_threshold": float(best_threshold),
+        "best_f1_threshold": {
+            "threshold": float(f1_threshold["threshold"]),
+            "f1": _round_metric(float(f1_threshold["f1"])),
+            "precision": _round_metric(float(f1_threshold["precision"])),
+            "recall": _round_metric(float(f1_threshold["recall"])),
+        },
+        "auc_roc": test_metrics["auc_roc"],
+        "auc_pr": test_metrics["auc_pr"],
+        "f1_score": test_metrics["f1_score"],
+        "precision": test_metrics["precision"],
+        "recall": test_metrics["recall"],
+        "business_cost": test_metrics["business_cost"],
+        "no_model_baseline_cost": test_metrics["no_model_baseline_cost"],
+        "net_cost_savings": test_metrics["net_cost_savings"],
+        "savings_rate": test_metrics["savings_rate"],
         "train_time_seconds": round(elapsed, 2),
-        "confusion_matrix": {
-            "tn": int(cm[0, 0]), "fp": int(cm[0, 1]),
-            "fn": int(cm[1, 0]), "tp": int(cm[1, 1]),
-        },
-        "validation_metrics": {
-            "auc_pr": round(float(val_auc_pr), 4),
-            "f1": round(float(val_f1), 4),
-            "precision": round(float(val_precision), 4),
-            "recall": round(float(val_recall), 4),
-        },
+        "confusion_matrix": test_metrics["confusion_matrix"],
+        "validation_threshold_cost": cost_threshold,
+        "validation_metrics": val_metrics,
+        "test_metrics": test_metrics,
     }
 
     return model, best_threshold, metrics, model_version_tag
@@ -528,7 +805,7 @@ def train_model(X_train, y_train, X_val, y_val, X_test, y_test, feature_cols, mo
 def export_model(model, scaler, feature_cols, metrics, threshold, model_version_tag="rf"):
     model_name = metrics.get("model_type", "Unknown")
     print("\n" + "=" * 60)
-    print("EXPORTING MODEL ARTIFACTS")
+    print(f"EXPORTING MODEL ARTIFACTS: {model_version_tag}")
     print("=" * 60)
 
     model_filename = f"fraud_model_{model_version_tag}.pkl"
@@ -546,9 +823,17 @@ def export_model(model, scaler, feature_cols, metrics, threshold, model_version_
 
     metadata = _to_native({
         "model_version": f"v1_paysim_{model_version_tag}",
+        "model_tag": model_version_tag,
         "model_type": model_name,
         "feature_columns": feature_cols,
         "optimal_threshold": threshold,
+        "threshold_selection_metric": "minimum_validation_business_cost",
+        "cost_assumptions": {
+            "missed_fraud_cost": "transaction amount for each false negative",
+            "false_alarm_unit_cost": metrics.get("false_alarm_unit_cost", 5.0),
+            "business_cost_formula": "sum(amount_i for false negatives) + false_alarm_unit_cost * false_positives",
+            "no_model_baseline_cost": "sum(amount_i for all actual fraud transactions)",
+        },
         "metrics": metrics,
     })
     meta_filename = f"model_metadata_{model_version_tag}.json"
@@ -556,19 +841,82 @@ def export_model(model, scaler, feature_cols, metrics, threshold, model_version_
     meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     print(f"[EXPORT] Metadata saved to {meta_path}")
 
-    results = _to_native({
-        "metrics": metrics,
-        "optimal_threshold": threshold,
-        "model_version": f"v1_paysim_{model_version_tag}",
+    files = [model_path, scaler_path, cols_path, meta_path]
+    for f in files:
+        print(f"  {f.name}: {f.stat().st_size / 1024:.1f} KB")
+
+    return {
+        "model_path": str(model_path),
+        "scaler_path": str(scaler_path),
+        "feature_columns_path": str(cols_path),
+        "metadata_path": str(meta_path),
+    }
+
+
+def export_comparison_outputs(results: list[dict], selected_result: dict, false_alarm_unit_cost: float) -> None:
+    selected_metrics = selected_result["metrics"]
+    selected_tag = selected_result["model_tag"]
+    selected_version = f"v1_paysim_{selected_tag}"
+
+    comparison = _to_native({
+        "selection_metric": "minimum_validation_business_cost",
+        "tie_breaker": "higher_validation_auc_pr",
+        "selected_model_tag": selected_tag,
+        "selected_model_version": selected_version,
+        "selected_threshold": selected_result["threshold"],
+        "cost_assumptions": {
+            "missed_fraud_cost": "transaction amount for each false negative",
+            "false_alarm_unit_cost": false_alarm_unit_cost,
+            "business_cost_formula": "sum(amount_i for false negatives) + false_alarm_unit_cost * false_positives",
+            "no_model_baseline_cost": "sum(amount_i for all actual fraud transactions)",
+        },
+        "models": [
+            {
+                "model_tag": item["model_tag"],
+                "model_type": item["metrics"]["model_type"],
+                "optimal_threshold": item["threshold"],
+                "validation_business_cost": item["metrics"]["validation_metrics"]["business_cost"],
+                "validation_auc_pr": item["metrics"]["validation_metrics"]["auc_pr"],
+                "test_business_cost": item["metrics"]["test_metrics"]["business_cost"],
+                "test_auc_pr": item["metrics"]["test_metrics"]["auc_pr"],
+                "test_precision": item["metrics"]["test_metrics"]["precision"],
+                "test_recall": item["metrics"]["test_metrics"]["recall"],
+                "test_f1_score": item["metrics"]["test_metrics"]["f1_score"],
+                "test_no_model_baseline_cost": item["metrics"]["test_metrics"]["no_model_baseline_cost"],
+                "test_net_cost_savings": item["metrics"]["test_metrics"]["net_cost_savings"],
+                "test_savings_rate": item["metrics"]["test_metrics"]["savings_rate"],
+                "confusion_matrix": item["metrics"]["test_metrics"]["confusion_matrix"],
+                "metrics": item["metrics"],
+            }
+            for item in results
+        ],
+    })
+    comparison_path = MODEL_DIR / "model_comparison.json"
+    comparison_path.write_text(json.dumps(comparison, indent=2), encoding="utf-8")
+    print(f"[EXPORT] Model comparison saved to {comparison_path}")
+
+    selected_model = _to_native({
+        "model_tag": selected_tag,
+        "model_version": selected_version,
+        "model_type": selected_metrics["model_type"],
+        "optimal_threshold": selected_result["threshold"],
+        "selection_metric": "minimum_validation_business_cost",
+    })
+    selected_path = MODEL_DIR / "selected_model.json"
+    selected_path.write_text(json.dumps(selected_model, indent=2), encoding="utf-8")
+    print(f"[EXPORT] Selected model pointer saved to {selected_path}")
+
+    eval_results = _to_native({
+        "selected_model_tag": selected_tag,
+        "model_version": selected_version,
+        "optimal_threshold": selected_result["threshold"],
+        "metrics": selected_metrics,
+        "model_comparison_path": str(comparison_path),
         "plots": [p.name for p in PLOTS_DIR.glob("*.png")],
     })
     eval_path = MODEL_DIR / "eval_results.json"
-    eval_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+    eval_path.write_text(json.dumps(eval_results, indent=2), encoding="utf-8")
     print(f"[EXPORT] Evaluation results saved to {eval_path}")
-
-    files = [model_path, scaler_path, cols_path, meta_path, eval_path]
-    for f in files:
-        print(f"  {f.name}: {f.stat().st_size / 1024:.1f} KB")
 
 
 def export_test_csv(events: list, output_path: Path):
@@ -632,6 +980,26 @@ def export_final_feature_table(events: list, feature_cols: list[str], output_pat
     print(f"  File size: {output_path.stat().st_size / 1024:.1f} KB")
 
 
+def parse_model_types(raw: str) -> list[str]:
+    requested = MODEL_ORDER if raw.strip().lower() == "all" else [item.strip().lower() for item in raw.split(",")]
+    selected: list[str] = []
+    seen: set[str] = set()
+    for model_type in requested:
+        if not model_type:
+            continue
+        if model_type not in MODEL_ORDER:
+            raise ValueError(f"Unknown model type: {model_type!r}. Valid values: all, {', '.join(MODEL_ORDER)}")
+        if model_type not in MODEL_REGISTRY:
+            print(f"[WARN] Skipping {model_type}: dependency is not installed")
+            continue
+        if model_type not in seen:
+            selected.append(model_type)
+            seen.add(model_type)
+    if not selected:
+        raise ValueError("No requested model types are available in this environment")
+    return selected
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Train Fraud Detection ML Model")
     parser.add_argument("--csv-path", required=True, help="Path to PaySim CSV dataset")
@@ -642,15 +1010,34 @@ def parse_args():
     parser.add_argument("--skip-eda", action="store_true", help="Skip EDA phase")
     parser.add_argument(
         "--model-type",
-        choices=list(MODEL_REGISTRY.keys()),
-        default="xgb",
-        help=f"Model type to train (default: xgb). Available: {', '.join(MODEL_REGISTRY)}",
+        default=None,
+        help="Single model type to train; kept for compatibility. Overrides --model-types when set.",
+    )
+    parser.add_argument(
+        "--model-types",
+        default="all",
+        help=f"Comma-separated model types or 'all' (default: all). Valid: {', '.join(MODEL_ORDER)}",
+    )
+    parser.add_argument(
+        "--false-alarm-cost",
+        type=float,
+        default=5.0,
+        help="Fixed customer-friction/manual-review cost per false positive (default: 5.0)",
     )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    if args.false_alarm_cost < 0:
+        print(f"[ERROR] --false-alarm-cost must be non-negative (got {args.false_alarm_cost})")
+        raise SystemExit(1)
+
+    try:
+        model_types = parse_model_types(args.model_type or args.model_types)
+    except ValueError as exc:
+        print(f"[ERROR] {exc}")
+        raise SystemExit(1)
 
     ratios = [args.train_ratio, args.val_ratio, args.test_ratio]
     total = sum(ratios)
@@ -682,18 +1069,51 @@ def main():
     print(f"  Train: {len(y_train):,} samples ({n_fraud_train:,} fraud, {n_fraud_train/len(y_train)*100:.3f}%)")
     print(f"  Val:   {len(y_val):,} samples ({n_fraud_val:,} fraud, {n_fraud_val/len(y_val)*100:.3f}%)")
     print(f"  Test:  {len(y_test):,} samples ({n_fraud_test:,} fraud, {n_fraud_test/len(y_test)*100:.3f}%)")
+    print(f"  Models: {', '.join(model_types)}")
+    print(f"  False alarm cost: {args.false_alarm_cost:.2f}")
+
+    amounts_val = np.array([ev.amount for ev in events_val], dtype=np.float64)
+    amounts_test = np.array([ev.amount for ev in events_test], dtype=np.float64)
 
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_val_scaled = scaler.transform(X_val)
     X_test_scaled = scaler.transform(X_test)
+    resampled_train = _resample_training_data(X_train_scaled, y_train)
 
-    model, best_threshold, metrics, model_version_tag = train_model(
-        X_train_scaled, y_train, X_val_scaled, y_val, X_test_scaled, y_test,
-        feature_cols, model_type=args.model_type,
-    )
+    results: list[dict] = []
+    for model_type in model_types:
+        model, best_threshold, metrics, model_version_tag = train_model(
+            X_train_scaled,
+            y_train,
+            X_val_scaled,
+            y_val,
+            X_test_scaled,
+            y_test,
+            amounts_val,
+            amounts_test,
+            feature_cols,
+            model_type=model_type,
+            false_alarm_unit_cost=args.false_alarm_cost,
+            resampled_train=resampled_train,
+        )
+        artifacts = export_model(model, scaler, feature_cols, metrics, best_threshold, model_version_tag)
+        results.append({
+            "model": model,
+            "threshold": best_threshold,
+            "metrics": metrics,
+            "model_tag": model_version_tag,
+            "artifacts": artifacts,
+        })
 
-    export_model(model, scaler, feature_cols, metrics, best_threshold, model_version_tag)
+    def _selection_key(item: dict) -> tuple[float, float]:
+        validation_metrics = item["metrics"]["validation_metrics"]
+        validation_cost = float(validation_metrics["business_cost"])
+        validation_auc_pr = float(validation_metrics["auc_pr"] or 0.0)
+        return validation_cost, -validation_auc_pr
+
+    selected_result = min(results, key=_selection_key)
+    export_comparison_outputs(results, selected_result, false_alarm_unit_cost=args.false_alarm_cost)
 
     test_csv_path = MODEL_DIR / "test_set.csv"
     export_test_csv(events_test, test_csv_path)
@@ -704,13 +1124,32 @@ def main():
     print("\n" + "=" * 60)
     print("TRAINING PIPELINE COMPLETED SUCCESSFULLY")
     print("=" * 60)
-    model_version = f"v1_paysim_{model_version_tag}"
-    print(f"\nModel type:     {metrics['model_type']}")
-    print(f"Model version:  {model_version}")
-    print(f"Optimal threshold: {best_threshold:.4f} (tuned on validation set)")
-    print(f"Test AUC-ROC: {metrics['auc_roc']:.4f}")
-    print(f"Test AUC-PR:  {metrics['auc_pr']:.4f}")
-    print(f"Test F1:      {metrics['f1_score']:.4f}")
+    selected_metrics = selected_result["metrics"]
+    model_version = f"v1_paysim_{selected_result['model_tag']}"
+    print("\nModel comparison (ranked by validation business cost):")
+    for item in sorted(results, key=_selection_key):
+        val = item["metrics"]["validation_metrics"]
+        test = item["metrics"]["test_metrics"]
+        print(
+            f"  {item['model_tag']:>6s} | "
+            f"val_cost={val['business_cost']:.2f} | "
+            f"test_cost={test['business_cost']:.2f} | "
+            f"test_auc_pr={test['auc_pr']:.4f} | "
+            f"test_f1={test['f1_score']:.4f} | "
+            f"savings={test['savings_rate']:.2%}"
+        )
+
+    print(f"\nSelected model type:     {selected_metrics['model_type']}")
+    print(f"Selected model version:  {model_version}")
+    print(f"Business threshold:      {selected_result['threshold']:.6f} (minimum validation business cost)")
+    print(f"Test AUC-ROC:            {_format_metric(selected_metrics['auc_roc'])}")
+    print(f"Test AUC-PR:             {_format_metric(selected_metrics['auc_pr'])}")
+    print(f"Test Precision:          {_format_metric(selected_metrics['precision'])}")
+    print(f"Test Recall:             {_format_metric(selected_metrics['recall'])}")
+    print(f"Test F1:                 {_format_metric(selected_metrics['f1_score'])}")
+    print(f"Test Business Cost:      {selected_metrics['business_cost']:.2f}")
+    print(f"No-Model Baseline Cost:  {selected_metrics['no_model_baseline_cost']:.2f}")
+    print(f"Net Cost Savings:        {selected_metrics['net_cost_savings']:.2f} ({selected_metrics['savings_rate']:.2%})")
     print(f"\nPlots saved to: {PLOTS_DIR}")
     print(f"Model artifacts: {MODEL_DIR}")
     print(f"Test set: {test_csv_path}")

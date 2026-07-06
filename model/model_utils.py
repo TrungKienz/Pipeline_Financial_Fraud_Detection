@@ -44,7 +44,21 @@ _model_cache: dict[str, Any] = {}
 
 
 def _get_model_type() -> str:
-    return os.environ.get("FRAUD_MODEL_TYPE", "xgb")
+    configured = os.environ.get("FRAUD_MODEL_TYPE")
+    if configured:
+        return configured
+
+    selected_path = _model_path("selected_model.json")
+    if selected_path.exists():
+        try:
+            selected = json.loads(selected_path.read_text(encoding="utf-8"))
+            model_tag = selected.get("model_tag") or selected.get("selected_model_tag")
+            if model_tag:
+                return str(model_tag)
+        except Exception:
+            LOGGER.exception("Failed to read selected model pointer: %s", selected_path)
+
+    return "xgb"
 
 
 def _model_filename(tag: str | None = None) -> str:
