@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
-from .models import AccountStateUpdate, FraudDecision, TransactionEvent, WindowMetric
+from .models import AccountStateUpdate, FraudDecision, PredictionRecord, TransactionEvent, WindowMetric
 
 
 def _dt(value: datetime) -> str:
@@ -68,21 +69,49 @@ def receiver_state_to_dict(update: AccountStateUpdate) -> dict[str, Any]:
 
 
 def fraud_decision_to_dict(event: TransactionEvent, decision: FraudDecision) -> dict[str, Any]:
-    return {
-        "alert_id": f"alert:{decision.event_id}",
-        "event_id": decision.event_id,
-        "account_id": event.name_orig,
-        "nameDest": event.name_dest,
-        "event_time": _dt(event.event_time),
-        "txn_type": event.txn_type,
-        "amount": event.amount,
-        "risk_score": decision.risk_score,
-        "severity": decision.severity,
-        "ml_score": decision.ml_score,
-        "ml_model_version": decision.ml_model_version,
-        "triggered_rules": list(decision.triggered_rules),
-        "is_alert": decision.is_alert,
+    record = prediction_record_from_decision(event, decision)
+    if record.alert_id is None:
+        record = replace(record, alert_id=f"alert:{decision.event_id}")
+    return prediction_record_to_dict(record)
+
+
+def prediction_record_from_decision(event: TransactionEvent, decision: FraudDecision) -> PredictionRecord:
+    alert_id = f"alert:{decision.event_id}" if decision.is_alert else None
+    return PredictionRecord(
+        event_id=decision.event_id,
+        account_id=event.name_orig,
+        name_dest=event.name_dest,
+        event_time=event.event_time,
+        txn_type=event.txn_type,
+        amount=event.amount,
+        risk_score=decision.risk_score,
+        severity=decision.severity,
+        ml_score=decision.ml_score,
+        ml_model_version=decision.ml_model_version,
+        triggered_rules=decision.triggered_rules,
+        is_alert=decision.is_alert,
+        alert_id=alert_id,
+    )
+
+
+def prediction_record_to_dict(record: PredictionRecord) -> dict[str, Any]:
+    payload = {
+        "event_id": record.event_id,
+        "account_id": record.account_id,
+        "nameDest": record.name_dest,
+        "event_time": _dt(record.event_time),
+        "txn_type": record.txn_type,
+        "amount": record.amount,
+        "risk_score": record.risk_score,
+        "severity": record.severity,
+        "ml_score": record.ml_score,
+        "ml_model_version": record.ml_model_version,
+        "triggered_rules": list(record.triggered_rules),
+        "is_alert": record.is_alert,
     }
+    if record.alert_id is not None:
+        payload["alert_id"] = record.alert_id
+    return payload
 
 
 def window_metric_to_dict(metric: WindowMetric, window_type: str) -> dict[str, Any]:

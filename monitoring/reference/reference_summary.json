@@ -1,0 +1,46 @@
+{
+  "source_csv": "E:\\Code\\Master-Project\\Pipeline_Financial_Fraud_Detection\\model\\test_set.csv",
+  "sample_rows": 200,
+  "generated_at": "2026-07-06T08:24:21.976584+00:00",
+  "columns": [
+    "event_id",
+    "step",
+    "txn_type",
+    "amount",
+    "risk_score",
+    "severity",
+    "ml_score",
+    "is_alert",
+    "label_is_fraud"
+  ],
+  "numeric_summary": {
+    "amount": {
+      "mean": 213985.62355,
+      "std": 673247.465159,
+      "min": 67.86,
+      "max": 7923681.63
+    },
+    "risk_score": {
+      "mean": 0.022735,
+      "std": 0.061472
+    },
+    "ml_score": {
+      "mean": 0.003263,
+      "std": 0.00805
+    }
+  },
+  "categorical_summary": {
+    "txn_type": {
+      "CASH_IN": 0.23,
+      "CASH_OUT": 0.34,
+      "DEBIT": 0.005,
+      "PAYMENT": 0.34,
+      "TRANSFER": 0.085
+    },
+    "severity": {
+      "low": 1.0
+    }
+  },
+  "alert_rate": 0.135,
+  "fraud_label_rate": 0.0
+}

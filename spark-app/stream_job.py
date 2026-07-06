@@ -26,10 +26,12 @@ from fraud_pipeline import (
     METRICS_WINDOWED_TOPIC,
     PIPELINE_DEAD_LETTER_TOPIC,
     PipelineConfig,
+    PredictionRecord,
     RuleEngine,
     WindowMetric,
     fraud_decision_to_dict,
     integrated_payload_to_transaction_event,
+    prediction_record_from_decision,
     window_metric_to_dict,
 )
 from fraud_pipeline.cassandra_schema import ensure_schema
@@ -535,6 +537,15 @@ def get_prepared_statements() -> dict[str, Any]:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
         ),
+        "insert_prediction": session.prepare(
+            """
+            INSERT INTO model_predictions_by_day (
+              day_bucket, event_ts, event_id, account_id, name_dest, txn_type, amount,
+              risk_score, severity, ml_score, ml_model_version, triggered_rules,
+              is_alert, alert_id, actual_label
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+        ),
         "insert_alert": session.prepare(
             """
             INSERT INTO alerts_by_account (
@@ -930,6 +941,30 @@ def persist_transaction(event: TransactionEvent, risk_score: float) -> None:
     )
 
 
+def persist_prediction(prediction: PredictionRecord) -> None:
+    statements = get_prepared_statements()
+    get_cassandra_session().execute(
+        statements["insert_prediction"],
+        (
+            prediction.event_time.date(),
+            to_utc_naive(prediction.event_time),
+            prediction.event_id,
+            prediction.account_id,
+            prediction.name_dest,
+            prediction.txn_type,
+            prediction.amount,
+            prediction.risk_score,
+            prediction.severity,
+            prediction.ml_score,
+            prediction.ml_model_version,
+            list(prediction.triggered_rules),
+            prediction.is_alert,
+            prediction.alert_id,
+            None,
+        ),
+    )
+
+
 def persist_alert(event: TransactionEvent, alert_payload: dict[str, Any]) -> None:
     statements = get_prepared_statements()
     get_cassandra_session().execute(
@@ -1086,7 +1121,9 @@ def process_integrated_batch(batch_df: DataFrame, batch_id: int, query_name: str
             known_counterparties=known_counterparties,
             watchlisted_accounts=watchlisted_accounts,
         )
+        prediction = prediction_record_from_decision(event, decision)
         persist_transaction(event, decision.risk_score)
+        persist_prediction(prediction)
         persist_account_states(event)
         if decision.is_alert:
             alert_payload = fraud_decision_to_dict(event, decision)
