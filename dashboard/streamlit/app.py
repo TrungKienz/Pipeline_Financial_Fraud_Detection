@@ -55,7 +55,17 @@ st.markdown(
 
 REVIEW_STATUS_OPTIONS = ["new", "in_review", "confirmed_fraud", "false_positive", "escalated", "needs_more_info"]
 REVIEW_LABEL_OPTIONS = ["unlabeled", "fraud", "legit", "needs_more_info"]
-ROOT = Path(__file__).resolve().parents[2]
+
+
+def resolve_root() -> Path:
+    file_path = Path(__file__).resolve()
+    for candidate in (file_path.parent, *file_path.parents):
+        if (candidate / "monitoring" / "reports").exists():
+            return candidate
+    return file_path.parent
+
+
+ROOT = resolve_root()
 REPORT_DIR = ROOT / "monitoring" / "reports"
 
 

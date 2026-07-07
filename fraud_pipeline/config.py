@@ -42,5 +42,5 @@ class PipelineConfig:
     cashout_after_inbound_weight: float = 0.40
     schema_version: int = 1
     default_csv_path: Path = Path(
-        r"D:\Code\BigData\Data\archive\paysim_dataset.csv"
+        r"D:\Code\Pipeline_Financial_Fraud_Detection\data\archive\paysim_dataset.csv"
     )

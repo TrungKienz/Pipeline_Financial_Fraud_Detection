@@ -1,8 +1,10 @@
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from api.app import app
+from api.service import KafkaPublishError
 
 
 def sample_payload(**overrides):
@@ -65,6 +67,22 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(len(body["predictions"]), 2)
+
+    @patch.dict("api.service.os.environ", {"KAFKA_BOOTSTRAP_SERVERS": "localhost:9092"}, clear=False)
+    @patch("api.service.publish_transaction_bundle")
+    def test_score_endpoint_publishes_to_kafka_when_ingest_is_configured(self, mock_publish):
+        response = self.client.post("/score", json=sample_payload())
+
+        self.assertEqual(response.status_code, 200)
+        mock_publish.assert_called_once()
+
+    @patch.dict("api.service.os.environ", {"KAFKA_BOOTSTRAP_SERVERS": "localhost:9092"}, clear=False)
+    @patch("api.service.publish_transaction_bundle", side_effect=KafkaPublishError("kafka unavailable"))
+    def test_score_endpoint_returns_503_when_kafka_publish_fails(self, _mock_publish):
+        response = self.client.post("/score", json=sample_payload())
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"], "kafka unavailable")
 
 
 if __name__ == "__main__":

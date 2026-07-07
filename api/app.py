@@ -1,7 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from .schemas import BatchScoreRequest, BatchScoreResponse, HealthResponse, ScoreRequest, ScoreResponse
-from .service import health_payload, score_transaction
+from .service import KafkaPublishError, health_payload, score_transaction
 
 
 app = FastAPI(
@@ -18,9 +18,15 @@ def healthcheck() -> HealthResponse:
 
 @app.post("/score", response_model=ScoreResponse)
 def score(payload: ScoreRequest) -> ScoreResponse:
-    return score_transaction(payload)
+    try:
+        return score_transaction(payload)
+    except KafkaPublishError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.post("/score/batch", response_model=BatchScoreResponse)
 def score_batch(payload: BatchScoreRequest) -> BatchScoreResponse:
-    return BatchScoreResponse(predictions=[score_transaction(item) for item in payload.transactions])
+    try:
+        return BatchScoreResponse(predictions=[score_transaction(item) for item in payload.transactions])
+    except KafkaPublishError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
