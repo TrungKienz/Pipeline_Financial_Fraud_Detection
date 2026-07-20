@@ -1,0 +1,152 @@
+\documentclass[11pt,a4paper]{article}
+
+% ------------------------------------------------------------------
+% Encoding and fonts
+% ------------------------------------------------------------------
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}          % subtle kerning/protrusion for a polished look
+
+% ------------------------------------------------------------------
+% Page geometry
+% ------------------------------------------------------------------
+\usepackage[margin=1in]{geometry}
+
+% ------------------------------------------------------------------
+% Mathematics
+% ------------------------------------------------------------------
+\usepackage{amsmath,amssymb}
+\usepackage{tikz-cd}
+
+% ------------------------------------------------------------------
+% Tables and figures
+% ------------------------------------------------------------------
+\usepackage{graphicx}           % figures
+\usepackage{booktabs}           % professional horizontal rules
+\usepackage{tabularx}           % width-aware tabular
+\usepackage{array}              % extended column specifiers
+\usepackage{multicol}
+\usepackage{placeins}           % \FloatBarrier
+\usepackage{float}              % [H] placement
+\usepackage[font=small,labelfont=bf,skip=6pt]{caption}
+
+% ------------------------------------------------------------------
+% Lists and colour
+% ------------------------------------------------------------------
+\usepackage{xcolor}
+\usepackage{enumitem}
+\setlist{itemsep=2pt,topsep=4pt,parsep=0pt}
+
+% ------------------------------------------------------------------
+% Bibliography (numbered, compressed) -- must precede hyperref cleanly
+% ------------------------------------------------------------------
+\usepackage[numbers,sort&compress]{natbib}
+
+% ------------------------------------------------------------------
+% Hyperlinks (load late) and smart cross-references (load after hyperref)
+% ------------------------------------------------------------------
+\usepackage[breaklinks=true]{hyperref}
+\hypersetup{
+  colorlinks = true,
+  linkcolor  = black,
+  citecolor  = {black!65!blue},
+  urlcolor   = {black!55!blue},
+  bookmarksnumbered = true,
+  pdftitle   = {Real-Time Payment Fraud Detection for an E-Commerce Platform},
+  pdfauthor  = {An, Hung, Kien, Hoang, Thuong, Kiet}
+}
+\usepackage[nameinlink,capitalise]{cleveref}
+
+% ------------------------------------------------------------------
+% Breakable typewriter text  (fix: long snake_case identifiers overflow)
+% ------------------------------------------------------------------
+% \texttt{failed\_payment\_attempts\_24h} is one unbreakable "word": TeX
+% cannot hyphenate it, so the line runs into the right margin.  We turn every
+% escaped underscore into a legal breakpoint (no hyphen is inserted), and give
+% the paragraph builder a little emergency stretch as a last resort.
+\DeclareRobustCommand{\_}{\textunderscore\allowbreak}
+\pdfstringdefDisableCommands{\let\_\textunderscore}  % keep PDF bookmarks clean
+\emergencystretch=3em
+\hyphenpenalty=200
+
+% ------------------------------------------------------------------
+% Paragraph layout
+% ------------------------------------------------------------------
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.6\baselineskip}
+
+% Slightly tighter, more balanced section spacing
+\makeatletter
+\renewcommand{\section}{\@startsection{section}{1}{\z@}%
+  {-3.0ex \@plus -1ex \@minus -.2ex}%
+  {1.6ex \@plus.2ex}%
+  {\normalfont\Large\bfseries}}
+\makeatother
+
+% ------------------------------------------------------------------
+% Title
+% ------------------------------------------------------------------
+\title{\bfseries Real-Time Payment Fraud Detection\\ for an E-Commerce Platform}
+\author{%
+  An Nguyen Quynh Anh \small(20232247M) \quad
+  Nguyen Quoc Hung \small(20252568M) \quad
+  Bui Trung Kien \small(20252567M)\\[2pt]
+  Nguyen Nam Hoang \small(20252758M) \quad
+  Nguyen Minh Thuong \small(20252280M) \quad
+  Nguyen Tuan Kiet \small(20252763M)\\[6pt]
+  \normalsize School of Information and Communication Technology\\
+  \normalsize Hanoi University of Science and Technology
+}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+  \input{sections/00_abstract.tex}
+\end{abstract}
+
+\input{sections/01_executive_summary.tex}
+
+\input{sections/02_business_problem.tex}
+
+\input{sections/03_data_sources_and_data_generation.tex}
+
+\input{sections/04_exploratory_data_analysis.tex}
+
+\input{sections/05_data_cleaning_and_preprocessing.tex}
+
+\input{sections/06_feature_engineering.tex}
+
+\input{sections/07_model_development_and_evaluation.tex}
+
+\input{sections/08_real_time_deployment_architecture.tex}
+
+\input{sections/09_model_monitoring.tex}
+
+\input{sections/10_business_recommendations.tex}
+
+\input{sections/11_limitations_and_future_work.tex}
+
+\input{sections/12_conclusion.tex}
+
+\input{sections/13_team_contributions.tex}
+
+% ------------------------------------------------------------------
+% References
+% ------------------------------------------------------------------
+\clearpage
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+% ------------------------------------------------------------------
+% Appendix
+% ------------------------------------------------------------------
+\clearpage
+\appendix
+\section*{Appendix}
+\addcontentsline{toc}{section}{Appendix}
+\input{appendix}
+
+\end{document}

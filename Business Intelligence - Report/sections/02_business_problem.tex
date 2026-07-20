@@ -1,0 +1,142 @@
+\section{Business Problem}
+\subsection{Business Context}
+E-commerce platforms process a large number of online payment transactions every day. While most transactions are legitimate, a small proportion may be fraudulent. These fraudulent transactions can result in direct financial loss, chargebacks, operational costs, and reduced trust from customers and merchants.
+
+The project announcement defines the central business question as identifying which incoming transactions are likely to be fraudulent and deciding how the platform should balance fraud prevention against unnecessary friction for legitimate customers
+
+In practice, blocking every suspicious transaction may reduce fraud loss, but it can also create false alarms. A false alarm happens when a legitimate transaction is incorrectly flagged as fraud. This may frustrate customers, reduce conversion rates, and increase the workload of the fraud review team. On the other hand, approving too many risky transactions may allow fraud to occur and increase financial loss.
+
+Therefore, the business problem is not simply a classification problem. It is a decision-making problem where the platform must choose the most appropriate action for each transaction.
+
+\subsection{Business Problem Statement}
+The objective of this project is to build a real-time payment fraud detection system for an e-commerce platform. The system should predict the fraud risk of each incoming transaction and support business decisions on whether the transaction should be approved, manually reviewed, or automatically blocked.
+
+The key business problem can be stated as follows:
+\textit{Which incoming payment transactions are likely to be fraudulent, and how should the platform decide whether to approve, manually review, or block each transaction while minimizing financial loss and customer friction?}
+
+\subsection{Business Objectives}
+The project aims to achieve the following business objectives:
+\begin{itemize}
+  \item \textbf{Detect fraudulent transactions effectively:} The system should identify as many fraudulent transactions as possible, especially high-risk transactions that may cause significant financial loss.
+  \item \textbf{Reduce financial loss from fraud:} By blocking or reviewing suspicious transactions, the platform can prevent potential fraud losses before they occur.
+  \item \textbf{Minimize false alarms:} The system should avoid incorrectly flagging legitimate customers as fraud, because this may harm customer experience and reduce successful purchases.
+  \item \textbf{Support risk-based decision making:} Instead of giving only a fraud/not-fraud prediction, the system should classify transactions into clear risk levels: low risk, medium risk, and high risk.
+  \item \textbf{Improve operational efficiency:} Manual review should be used only for transactions that require human judgment. This helps reduce the workload of the fraud investigation team.
+\end{itemize}
+
+\subsection{Decision Framework}
+The fraud detection system will assign each transaction a predicted fraud probability. Based on this probability, the platform can apply the following business policy:
+
+\begin{table}[h]
+  \centering
+  \caption{Risk policy recommendation}
+  \label{tab:risk_policy}
+  \begin{tabularx}{\textwidth}{p{3cm} p{4cm} p{3cm} X}
+    \toprule
+    \textbf{Risk level} &
+    \textbf{Predicted fraud probability} &
+    \textbf{Business action} &
+    \textbf{Explanation} \\
+    \midrule
+
+    Low risk &
+    Below lower threshold &
+    Approve &
+    The transaction is likely to be legitimate, so it should be processed normally. \\
+
+    \midrule
+
+    Medium risk &
+    Between lower and upper threshold &
+    Manual review &
+    The transaction has some suspicious signals, so it should be checked by a fraud analyst. \\
+
+    \midrule
+
+    High risk &
+    Above upper threshold &
+    Auto-block &
+    The transaction is highly likely to be fraudulent, so it should be blocked automatically. \\
+
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+This policy allows the platform to balance fraud prevention and customer experience. The exact thresholds should be selected based on model performance and business costs, especially the cost of missed fraud and the cost of false alarms.
+
+\subsection{Scope of the Business Problem}
+This project focuses on transaction-level fraud detection for online payment data. The model is designed to score each transaction in real time and provide a recommended action for the platform.
+
+The project does not aim to completely eliminate fraud, because fraud patterns can change over time. Instead, the goal is to build a practical fraud detection workflow that includes prediction, business decision rules, deployment, and monitoring. This aligns with the project requirement to develop an end-to-end analytics solution from raw data to a monitored and deployed model.
+
+\subsection{Business KPIs}
+Since payment fraud detection is a highly imbalanced business problem, overall accuracy is not sufficient to evaluate the usefulness of the system. In this dataset, fraudulent transactions account for only approximately 0.129\% of all transactions, meaning that a model could achieve very high accuracy by predicting almost every transaction as legitimate. However, such a model would fail to solve the actual business problem because it would miss fraudulent transactions and allow financial losses to occur.
+
+Therefore, this project evaluates the fraud detection system using business-oriented KPIs. These KPIs are designed to measure not only statistical model performance, but also the financial and operational impact of fraud decisions. They help answer three key business questions: how much fraud the system detects, how many legitimate customers are incorrectly flagged, and how much financial loss the system can avoid.
+
+The main business KPIs used in this project are summarized in Table~\ref{tab:business-kpis}.
+
+\begin{table}[htbp]
+\centering
+\caption{Business KPIs for Fraud Detection}
+\label{tab:business-kpis}
+\small
+\renewcommand{\arraystretch}{1.35}
+\begin{tabularx}{\textwidth}{p{3.0cm} p{3.2cm} X}
+\toprule
+\textbf{KPI} & \textbf{Formula} & \textbf{Business Meaning} \\
+\midrule
+
+Fraud Rate &
+$\dfrac{N_{\text{fraud}}}{N_{\text{total}}}$ &
+Measures how common fraud is in the transaction population and indicates the severity of class imbalance. \\
+
+\midrule
+Precision &
+$\dfrac{TP}{TP + FP}$ &
+Measures the reliability of fraud alerts. High precision means fewer legitimate transactions are incorrectly flagged. \\
+
+\midrule
+Recall &
+$\dfrac{TP}{TP + FN}$ &
+Measures the ability to detect actual fraud. High recall means fewer fraudulent transactions are missed. \\
+
+\midrule
+False Positive Rate &
+$\dfrac{FP}{FP + TN}$ &
+Measures the percentage of legitimate transactions incorrectly flagged as fraud. Lower values indicate less customer friction. \\
+
+\midrule
+Financial Loss Avoided &
+$\sum Amount_{TP}$ &
+Estimates the value of fraudulent transactions successfully prevented by the system. \\
+
+\midrule
+Cost of False Alarms &
+$FP \times C_{FP}$ &
+Estimates the operational and customer-friction cost caused by wrongly flagged legitimate transactions. \\
+
+\midrule
+Manual Review Rate &
+$\dfrac{N_{\text{review}}}{N_{\text{total}}}$ &
+Measures the workload created for the fraud review team. \\
+
+\bottomrule
+\end{tabularx}
+\end{table}
+
+In Table~\ref{tab:business-kpis}, $TP$ refers to fraudulent transactions correctly detected as fraud, $FP$ refers to legitimate transactions incorrectly flagged as fraud, $TN$ refers to legitimate transactions correctly approved, and $FN$ refers to fraudulent transactions incorrectly approved. $N_{\text{fraud}}$ is the number of fraudulent transactions, $N_{\text{total}}$ is the total number of transactions, $N_{\text{review}}$ is the number of transactions sent to manual review, and $C_{FP}$ is the assumed cost per false positive.
+
+In the formulas above, $TP$ represents fraudulent transactions correctly detected as fraud, $FP$ represents legitimate transactions incorrectly flagged as fraud, $TN$ represents legitimate transactions correctly approved, and $FN$ represents fraudulent transactions incorrectly approved.
+
+Fraud Rate is used to describe the level of imbalance in the dataset. A very low fraud rate means that accuracy can be misleading, so the project focuses on precision, recall, AUC-PR, and cost-based evaluation instead. This is consistent with the evaluation strategy later used in the model development section, where the dataset contains 6,362,620 transactions and only 8,213 fraud cases.
+
+Precision is important because it measures the quality of fraud alerts. If precision is low, many legitimate transactions will be incorrectly flagged, which can create unnecessary manual review work and reduce customer satisfaction. Recall is also critical because missed fraud cases directly lead to financial loss. In this project, recall is especially important because false negatives represent fraudulent transactions that are approved by the platform.
+
+False Positive Rate is included to capture the customer experience side of the problem. A fraud detection system should not block or review too many legitimate customers, even if it detects fraud effectively. This KPI therefore reflects the trade-off between fraud prevention and customer friction.
+
+Financial Loss Avoided measures the monetary value of fraudulent transactions that are successfully detected and prevented. This KPI directly connects the machine learning model to business value. In contrast, Cost of False Alarms captures the business cost of incorrectly flagging legitimate transactions, including manual review cost, transaction delay, and potential customer dissatisfaction.
+
+Manual Review Rate is used to measure operational workload. In the proposed decision framework, only medium-risk transactions should be sent to manual review. If the manual review rate is too high, the fraud operation becomes expensive and inefficient. If it is too low, suspicious transactions may not receive enough human attention.
+
+Together, these KPIs support threshold selection and risk-policy design. A lower fraud threshold may increase recall and reduce missed fraud losses, but it can also increase false positives and manual review workload. A higher threshold may reduce customer friction, but it may allow more fraudulent transactions to be approved. Therefore, the final threshold should be selected based on both model performance and business cost, especially the cost of missed fraud compared with the cost of false alarms.

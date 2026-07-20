@@ -1,0 +1,166 @@
+\section{Exploratory Data Analysis}
+\label{sec:eda}
+
+The purpose of this EDA is not only to describe the transaction dataset, but also to identify practical fraud signals that can guide feature engineering, model evaluation, and real-time review rules. The dataset combines standard payment attributes from the base PaySim simulation~\citep{lopez2016paysim} with synthetic contextual signals such as account age, device/browser information, geographic mismatch, failed payment attempts, and transaction time. After checking that the dataset has no missing values or duplicate rows, the analysis focuses on three fraud-detection questions: where fraud is concentrated, which contextual signals increase risk, and how these insights should influence downstream modeling.
+
+\paragraph{A note on the synthetic contextual signals.} The contextual and behavioral fields analyzed below are not empirical observations from a live e-commerce platform; they were generated to augment the base transaction data with the risk factors described in the project brief. Their generation followed documented behavioral assumptions (for example, that newly created accounts and repeated failed payment attempts are associated with elevated fraud risk). Consequently, the associations reported in this section---such as higher fraud rates for new accounts, address mismatch, or early-morning activity---reflect the design of the data-generation process rather than independently discovered empirical evidence. We present them because they illustrate the risk-signal engineering workflow the project is meant to demonstrate, and we are explicit about their provenance so that the strength of these associations is not over-interpreted. The base PaySim attributes (transaction type, amount, and account balances) are the only fields carrying the simulator's original fraud labelling logic.
+
+\subsection{Transaction Type Distribution}
+
+The transaction mix is dominated by routine payment and cash movement activities, while some types occur much less frequently. This matters because a fraud model trained on raw data can easily learn the behavior of the largest transaction groups and under-emphasize rarer but riskier patterns. Therefore, transaction type should not be treated only as a descriptive field; it is an important segmentation variable for comparing fraud behavior and for designing type-specific monitoring rules.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.82\textwidth,height=0.32\textheight,keepaspectratio]{figures/eda/eda_01_cell_8.png}
+  \caption{Count of transactions by transaction type.}
+  \label{fig:eda-transaction-type-count}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.52\textwidth,height=0.30\textheight,keepaspectratio]{figures/eda/eda_02_cell_10.png}
+  \caption{Share of transactions by transaction type.}
+  \label{fig:eda-transaction-type-share}
+\end{figure}
+
+\FloatBarrier
+
+\subsection{Class Imbalance}
+
+The target variable is extremely imbalanced: legitimate transactions are overwhelmingly more common than fraud. This is a central modeling issue rather than just a data characteristic. Accuracy alone would be misleading because a model could classify almost everything as legitimate and still appear strong. The evaluation strategy must therefore prioritize recall, precision, F1-score, PR-AUC, and confusion-matrix trade-offs. This finding also motivates stratified splitting, imbalance-aware training, and threshold tuning based on business cost: missed fraud creates direct loss, while false alarms create customer friction and analyst workload.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.54\textwidth,height=0.30\textheight,keepaspectratio]{figures/eda/eda_03_cell_11.png}
+  \caption{Fraud versus non-fraud class distribution.}
+  \label{fig:eda-class-imbalance}
+\end{figure}
+
+\FloatBarrier
+
+\subsection{Fraud by Transaction Type and Account Role}
+
+Fraud is not distributed evenly across transaction types. It is concentrated in \texttt{TRANSFER} and \texttt{CASH\_OUT}, which is consistent with a fraud scenario where attackers move value out of an account or quickly convert stolen balances into cash-out transactions. In contrast, ordinary merchant-style payment behavior is much less central to the fraud pattern. This insight supports using transaction type both as a model feature and as a rule trigger for enhanced checks on transfer/cash-out flows.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.54\textwidth,height=0.30\textheight,keepaspectratio]{figures/eda/eda_04_cell_13.png}
+  \caption{Distribution of fraudulent transactions by transaction type.}
+  \label{fig:eda-fraud-by-type}
+\end{figure}
+
+The account-role comparison reinforces this interpretation. Legitimate activity often involves merchant payments, while fraudulent activity is concentrated in direct customer flows. This suggests that fraud detection should monitor money movement chains rather than only isolated purchases. It also connects directly to real-time rules such as rapid transfer, fan-out behavior, cash-out after inbound transfer, and unusual counterparty interactions.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.82\textwidth,height=0.32\textheight,keepaspectratio]{figures/eda/eda_05_cell_16.png}
+  \caption{Origin and destination account roles for non-fraudulent transactions.}
+  \label{fig:eda-nonfraud-account-roles}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.82\textwidth,height=0.32\textheight,keepaspectratio]{figures/eda/eda_06_cell_17.png}
+  \caption{Origin and destination account roles for fraudulent transactions.}
+  \label{fig:eda-fraud-account-roles}
+\end{figure}
+
+\FloatBarrier
+
+\subsection{Fraud Rate by Transaction Amount and Account Age}
+
+Transaction amount shows a clear risk gradient: higher-value transactions tend to have a higher fraud rate. This does not imply that small transactions are safe, but it indicates that transaction value should influence risk scoring and review priority. In practice, amount should be combined with balance-based features, because a large transfer from an account that is being drained is more suspicious than a large but routine transaction from a stable account.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.82\textwidth,height=0.30\textheight,keepaspectratio]{figures/eda/eda_07_cell_22.png}
+  \caption{Fraud rate by transaction amount range.}
+  \label{fig:eda-fraud-rate-amount}
+\end{figure}
+
+Account age provides a complementary behavioral signal. Newer accounts show higher risk than established accounts, suggesting that fraud may involve newly created or recently compromised users. This insight supports including account-age features and applying stronger verification when new accounts attempt large transfers, cash-outs, or other high-risk actions.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.68\textwidth,height=0.30\textheight,keepaspectratio]{figures/eda/eda_08_cell_25.png}
+  \caption{Fraud rate by customer account age group.}
+  \label{fig:eda-fraud-rate-account-age}
+\end{figure}
+
+\FloatBarrier
+
+\subsection{Fraud Pattern by Device, Browser, and Synthetic Risk Signals}
+
+Device and browser fields help approximate e-commerce channel behavior. Their individual fraud-rate differences are not strong enough to act as standalone rules, but they are useful contextual features when combined with transaction amount, account age, and payment behavior. For example, a new account using an unusual device/browser combination to initiate a high-value transfer should receive a higher risk score than a normal recurring transaction from an established pattern.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.72\textwidth,height=0.30\textheight,keepaspectratio]{figures/eda/eda_09_cell_28.png}
+  \caption{Fraud rate by browser.}
+  \label{fig:eda-fraud-rate-browser}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.66\textwidth,height=0.30\textheight,keepaspectratio]{figures/eda/eda_10_cell_28.png}
+  \caption{Fraud rate by device type.}
+  \label{fig:eda-fraud-rate-device}
+\end{figure}
+
+Shipping/billing mismatch and repeated failed payment attempts are more directly interpretable as risk signals. A mismatch may reflect legitimate travel or cross-border shopping, so it should not automatically block a transaction. However, when combined with high amount, new account, or unusual transfer behavior, it becomes a strong candidate for step-up verification. Failed payment attempts are especially useful because they may capture card testing, credential stuffing, or repeated attempts before a successful fraudulent transaction.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.52\textwidth,height=0.28\textheight,keepaspectratio]{figures/eda/eda_11_cell_31.png}
+  \caption{Fraud rate by shipping/billing mismatch status.}
+  \label{fig:eda-fraud-rate-mismatch}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.72\textwidth,height=0.30\textheight,keepaspectratio]{figures/eda/eda_12_cell_34.png}
+  \caption{Fraud rate by failed payment attempts in the previous 24 hours.}
+  \label{fig:eda-fraud-rate-failed-attempts}
+\end{figure}
+
+\FloatBarrier
+
+\subsection{Fraud Pattern by Time}
+
+Transaction volume is highest during normal daytime and evening activity, while the early-morning window from 02:00 to 05:00 has much lower traffic. This contrast is useful because abnormal activity during low-traffic hours can be easier to isolate operationally.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.78\textwidth,height=0.30\textheight,keepaspectratio]{figures/eda/eda_13a_hourly_transaction_count.png}
+  \caption{Transaction count by hour of day. The early-morning hours from 02:00 to 05:00 are highlighted.}
+  \label{fig:eda-transaction-count-hour}
+\end{figure}
+
+The fraud-rate plot shows that the 02:00--05:00 window has elevated fraud risk despite low transaction volume. This makes time of day a useful contextual risk signal. The practical implication is not to block all late-night transactions, but to increase scrutiny when early-morning activity is combined with other suspicious conditions such as transfer/cash-out type, high amount, new account, failed payment attempts, or shipping/billing mismatch.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.78\textwidth,height=0.30\textheight,keepaspectratio]{figures/eda/eda_13_cell_37.png}
+  \caption{Fraud rate by hour of day. Fraud risk is elevated during the early-morning window.}
+  \label{fig:eda-fraud-rate-hour}
+\end{figure}
+
+\FloatBarrier
+
+\subsection{Correlation Analysis and Business Insights}
+
+The correlation matrix confirms that fraud is not explained by one dominant linear feature. Instead, the strongest signals are behavioral combinations: high amount, transfer/cash-out flow, customer--customer movement, low account age, failed attempts, contextual mismatch, and unusual transaction time. This supports a multi-feature model rather than a single-rule detector.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.82\textwidth,height=0.34\textheight,keepaspectratio]{figures/eda/eda_14_cell_38.png}
+  \caption{Correlation heatmap for numeric transaction and contextual features.}
+  \label{fig:eda-correlation-heatmap}
+\end{figure}
+
+At first glance, \cref{fig:eda-correlation-heatmap} may appear to contradict the earlier bar charts: the contextual signals show only weak linear correlation with \texttt{isFraud} (roughly $0.00$--$0.04$), yet the grouped fraud-rate plots show large relative differences. There is no contradiction. Because fraud is extremely rare (about $0.13\%$ of records), even a category whose fraud rate is several times the baseline still contains overwhelmingly legitimate transactions, so the Pearson correlation---which is dominated by the majority class---remains close to zero. Relative fraud-rate ratios and precision/recall-oriented metrics are therefore far more informative here than raw linear correlation, which is a further reason accuracy is unsuitable for this problem~\citep{saito2015precision}. We also note a known data artifact: \texttt{customer\_account\_age\_days} appears twice in the underlying feature frame due to a merge during data assembly; the duplicate is dropped before modeling and does not affect the engineered feature set in \cref{sec:feature_engineering}.
+
+The main EDA conclusion is that fraud risk emerges from combinations of transaction, account, channel, and time-based signals. These insights motivate the next stages of the project: engineer balance- and behavior-based features, handle class imbalance explicitly, evaluate models using precision/recall-oriented metrics, and define a review threshold that balances fraud loss against customer friction. For deployment, the most actionable rules are not broad blocks, but risk-score boosts for combinations such as high-value \texttt{TRANSFER}/\texttt{CASH\_OUT}, new-account activity, repeated failed attempts, shipping/billing mismatch, and early-morning transactions.
+
+\FloatBarrier
+\clearpage

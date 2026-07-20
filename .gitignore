@@ -1,0 +1,61 @@
+# ============================================================
+# Only source code is tracked. Everything below (binaries, data,
+# generated plots, documents, build artifacts) is ignored.
+# ============================================================
+
+# ---- Python ----
+**/__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# ---- OS / editor noise ----
+.DS_Store
+**/.DS_Store
+.idea/
+.vscode/
+
+# ---- Data files ----
+Data/
+*.csv
+*.zip
+*.parquet
+
+# ---- Model / binary artifacts ----
+*.pkl
+*.joblib
+*.h5
+*.onnx
+
+# ---- Generated images / plots ----
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+
+# ---- Documents & slides (non-code deliverables) ----
+*.pdf
+*.pptx
+*.ppt
+*.docx
+*.doc
+*.xlsx
+*.xls
+
+# ---- Reports / misc generated output ----
+*.html
+
+# ---- LaTeX build artifacts ----
+*.aux
+*.log
+*.out
+*.toc
+*.bbl
+*.blg
+*.synctex.gz
+*.fls
+*.fdb_latexmk

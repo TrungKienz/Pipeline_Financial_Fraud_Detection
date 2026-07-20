@@ -1,0 +1,6 @@
+streamlit
+cassandra-driver
+redis
+pandas
+plotly
+kafka-python

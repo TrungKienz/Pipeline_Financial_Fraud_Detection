@@ -1,0 +1,185 @@
+\section{Model Development and Evaluation}
+\label{sec:model_dev}  
+
+\subsection{Experimental Setup and Models Compared}
+\label{sec:experimental_setup_models}
+
+After data cleaning, preprocessing, and feature engineering, the final modeling dataset contained 6,362,620 transactions, of which 8,213 were fraudulent, giving a fraud rate of approximately 0.129\%. This confirms that the classification task is highly imbalanced, as previously discussed in Section~\ref{sec:handling_class_imbalance}.
+
+To ensure a fair comparison, all models were trained and evaluated using the same feature set and the same data split. The dataset was divided into three parts: 60\% for training, 20\% for validation, and 20\% for final testing. Table~\ref{tab:dataset_split} summarizes the number of transactions and fraud cases in each split.
+
+
+\input{tables/7_1_dataset_split}
+
+The training set was used to fit the models, the validation set was used for model comparison and threshold tuning, and the test set was held out until the final evaluation stage. This setup ensures that the final reported performance reflects unseen data rather than the data used for model selection.
+
+Because the fraud class is extremely rare, imbalance handling was applied only to the training data to avoid data leakage. SMOTE was used as an oversampling technique to increase the representation of the minority fraud class in the training data~\cite{chawla2002smote}, while class weighting or \texttt{scale\_pos\_weight} was also used where supported by the model. The validation and test sets were kept in their original imbalanced form so that evaluation reflected real-world fraud detection conditions.
+
+Four supervised classification models were compared. Table~\ref{tab:models_compared} lists the models and their roles in the comparison.
+
+\input{tables/7_1_models_compared}
+
+Table~\ref{tab:model_training_config} summarizes the main model configurations and training time. Although Random Forest achieved strong ranking performance, it required the longest training time. In contrast, XGBoost and LightGBM trained much faster while remaining suitable for large-scale tabular fraud data.
+
+\input{tables/7_1_model_training_config}
+
+These models were selected to cover both interpretable baseline models and more powerful tree-based ensemble methods. Random Forest was included as a nonlinear bagging-based ensemble model~\cite{breiman2001random}, while XGBoost and LightGBM were included because gradient boosting methods are widely used for high-performing tabular classification tasks~\cite{chen2016xgboost,ke2017lightgbm}.
+
+Despite these differences, all models were trained using the same encoded and scaled feature matrix. Each model produced a fraud probability score for every transaction rather than only a binary prediction. This probability-based setup allowed the decision threshold to be adjusted later according to the business trade-off between missed fraud and false alarms, which is discussed in Section~\ref{sec:cost_based_evaluation} and Section~\ref{sec:threshold_selection}. The final model was therefore selected not only based on statistical performance, but also on its cost effectiveness under the fraud-specific business cost function.
+
+\subsection{Evaluation Metrics for Imbalanced Fraud Detection}
+\label{sec:evaluation_metrics}
+
+Fraud detection is a highly imbalanced classification problem, where fraudulent transactions represent only a very small fraction of all transactions. In our dataset, the fraud rate is approximately 0.129\%, as discussed in Section~\ref{sec:handling_class_imbalance}. Because of this imbalance, overall accuracy is not an appropriate primary evaluation metric. For highly imbalanced binary classification problems, precision-recall analysis is often more informative than accuracy or ROC-based evaluation because it focuses on the minority positive class~\cite{saito2015precision,davis2006relationship}. A model that classifies every transaction as legitimate would still achieve very high accuracy, but it would fail to detect any fraudulent transactions.
+
+Therefore, the evaluation focused on metrics that better reflect performance on the minority fraud class. Table~\ref{tab:evaluation_metrics} summarizes the main metrics used in this project.
+
+\input{tables/7_2_evaluation_metrics}
+
+
+The most important ranking metric in this project is AUC-PR. Compared with accuracy or even ROC-AUC, AUC-PR is more informative when the positive class is rare because it focuses directly on the trade-off between precision and recall for fraud cases. A high AUC-PR indicates that the model can assign higher fraud probabilities to fraudulent transactions across many possible decision thresholds. This makes AUC-PR particularly suitable for fraud detection, where the main concern is the model's ability to identify rare fraudulent transactions without producing excessive false alarms~\cite{saito2015precision}.
+
+Precision measures how reliable the model's fraud alerts are. In a real-time payment review system, low precision means that many legitimate customers may be unnecessarily flagged, creating customer friction and additional manual review workload. However, maximizing precision alone may cause the model to miss fraud cases.
+
+Recall measures how many actual fraud transactions are captured by the model. In fraud detection, recall is especially important because false negatives represent fraudulent transactions that are approved and may lead to direct financial loss. However, maximizing recall alone can increase false positives.
+
+The F1-score provides a single metric that balances precision and recall. It is useful for comparing models statistically, but it does not fully represent the business impact of fraud decisions because false negatives and false positives do not have equal financial consequences.
+
+Using these metrics, Table~\ref{tab:test_statistical_performance} compares the test-set performance of all four models under their selected operating thresholds.
+
+\input{tables/7_2_test_statistical_performance}
+
+The results show that all models achieved very high recall, meaning that they were able to detect nearly all fraud cases. However, precision differed substantially across models. Logistic Regression and Random Forest produced many more false alarms, while LightGBM achieved the best balance between recall and alert quality.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.48\textwidth]{figures/7_model_development_and_evaluation/pr_curve_logreg.png}
+\includegraphics[width=0.48\textwidth]{figures/7_model_development_and_evaluation/pr_curve_rf.png}
+\includegraphics[width=0.48\textwidth]{figures/7_model_development_and_evaluation/pr_curve_xgb.png}
+\includegraphics[width=0.48\textwidth]{figures/7_model_development_and_evaluation/pr_curve_lgbm.png}
+\caption{Precision-recall curves of the compared models on the test set}
+\label{fig:pr-curves-compared}
+\end{figure}
+
+Figure~\ref{fig:pr-curves-compared} visualizes the precision-recall behavior of the compared models. This is more informative than accuracy or ROC curves because fraud transactions represent only a very small share of the dataset.
+
+Finally, the confusion matrix was used to interpret each model's decisions in terms of true positives, false positives, true negatives, and false negatives. These quantities are also the foundation for the business cost calculation described in Section~\ref{sec:cost_based_evaluation}. As a result, the statistical metrics in this section were used together with the cost-based metric to select the final operating threshold and production model.
+
+\subsection{Cost-Based Evaluation}
+\label{sec:cost_based_evaluation}
+
+In fraud detection, different types of classification errors have different business consequences. A false negative means that a fraudulent transaction is approved, causing direct financial loss. A false positive means that a legitimate transaction is flagged for review, creating customer friction and manual review cost. Therefore, model evaluation should not rely only on statistical metrics such as AUC-PR, precision, recall, and F1-score. This follows the principle of cost-sensitive evaluation, where different prediction errors are assigned different business costs instead of being treated equally~\cite{elkan2001foundations}. A cost-based evaluation was also used to measure the financial impact of each model's decisions.
+
+For each transaction, the model outputs a fraud probability score. Given an operating threshold $t$, a transaction is classified as fraudulent if its predicted probability is greater than or equal to $t$:
+
+\[
+\hat{y}_i(t) =
+\begin{cases}
+1, & \text{if } \hat{p}_i \geq t \\
+0, & \text{otherwise}
+\end{cases}
+\]
+
+The business cost of a model at threshold $t$ is defined as:
+
+\[
+\text{Business Cost}(t)
+=
+\sum_{i: y_i = 1, \hat{y}_i(t) = 0} \text{amount}_i
++
+5 \times \sum_{i: y_i = 0, \hat{y}_i(t) = 1} 1
+\]
+
+The exact cost values are project-specific business assumptions, but the general approach follows cost-sensitive fraud evaluation, where the cost of a missed fraud case can depend on the transaction amount~\cite{bahnsen2015example}.
+
+The first term represents the total transaction amount of fraud cases missed by the model, while the second term represents the fixed customer-friction or manual-review cost of false alarms. In this project, the false alarm cost was set to 5 per false positive.
+
+A no-model baseline was also calculated. Under this baseline, the platform approves all transactions, so every actual fraud transaction is missed. The baseline cost is therefore:
+
+\[
+\text{No-Model Baseline Cost}
+=
+\sum_{i: y_i = 1} \text{amount}_i
+\]
+
+The net cost savings and savings rate are then defined as:
+
+\[
+\text{Net Cost Savings}
+=
+\text{No-Model Baseline Cost}
+-
+\text{Business Cost}
+\]
+
+\[
+\text{Savings Rate}
+=
+\frac{\text{Net Cost Savings}}{\text{No-Model Baseline Cost}}
+\]
+
+Table~\ref{tab:cost_based_model_comparison} summarizes the cost-based performance of the four models on the validation and test sets. The validation business cost was used for model comparison and threshold selection, while the test business cost was used only for final evaluation on unseen data.
+
+\input{tables/7_3_cost_based_model_comparison}
+
+To better understand where these costs came from, Table~\ref{tab:test_cost_breakdown} decomposes the test-set business cost into false positives, false negatives, missed fraud cost, and false alarm cost.
+
+\input{tables/7_3_test_cost_breakdown}
+
+This breakdown shows that Logistic Regression and Random Forest avoided false negatives but generated a large number of false positives. XGBoost reduced false positives substantially, but its single missed fraud case had a relatively high transaction amount. LightGBM produced only 890 false positives and missed only one very small fraud transaction, resulting in the lowest total business cost.
+
+The no-model baseline cost on the test set was 2,459,164,485.22. This represents the total fraud amount that would be lost if all transactions were automatically approved. All trained models reduced the business cost substantially compared with this baseline, showing that machine learning provides significant financial value for fraud detection.
+
+Among the compared models, LightGBM achieved the lowest validation business cost and the lowest test business cost, as shown in Table~\ref{tab:cost_based_model_comparison}. Its test business cost was only 4,601.00, compared with a no-model baseline cost of 2,459,164,485.22. This indicates that the model captured nearly all fraudulent transaction value while producing a relatively small number of false alarms.
+
+The cost-based evaluation is especially important because models with similar statistical metrics can have very different financial outcomes. For example, a model may achieve a high AUC-PR but still be less attractive from a business perspective if its chosen threshold produces many expensive false negatives. Therefore, the operating threshold was selected by minimizing validation business cost, as discussed in Section~\ref{sec:threshold_selection}.
+
+\subsection{Threshold Selection and Final Model Choice}
+\label{sec:threshold_selection}
+
+After each model produced fraud probability scores, an operating threshold had to be selected to convert these probabilities into binary fraud decisions. The default threshold of 0.5 was not used because it does not necessarily reflect the business trade-off in fraud detection. In cost-sensitive classification, the operating threshold should reflect the relative costs of false negatives and false positives rather than relying on a fixed default threshold~\cite{elkan2001foundations}. In this project, missing a fraudulent transaction can cause direct financial loss, while incorrectly flagging a legitimate transaction creates a smaller manual-review or customer-friction cost.
+
+The threshold was selected using the validation set, not the test set. For each model, multiple candidate thresholds were evaluated, and the threshold with the lowest validation business cost was selected. This avoids using the test set during model selection and keeps the test set as an unbiased final evaluation sample.
+
+The threshold selection objective was:
+
+\[
+t^* = \arg\min_t \text{Business Cost}(t)
+\]
+
+where the business cost function is defined in Section~\ref{sec:cost_based_evaluation}. In other words, the selected threshold is the one that minimizes the total cost of missed fraud and false alarms on the validation set.
+
+As shown in Table~\ref{tab:cost_based_model_comparison}, LightGBM achieved the lowest validation business cost among the four models. Therefore, LightGBM was selected as the final production model. Its selected operating threshold was:
+
+\[
+t^* = 0.001050
+\]
+
+This threshold is much lower than 0.5 because the dataset is severely imbalanced and the cost of missing fraud is much higher than the fixed cost of reviewing a false alarm. A lower threshold makes the model more sensitive to suspicious transactions, increasing recall and reducing missed fraud losses.
+
+Table~\ref{tab:final_model_performance} summarizes the final test-set performance of the selected LightGBM model using the cost-minimizing threshold.
+
+\input{tables/7_4_final_model_performance}
+
+The confusion matrix of the selected LightGBM model is shown in Figure~\ref{fig:lgbm_confusion_matrix}. The model detected 1,641 out of 1,642 fraud cases in the test set, missing only one fraudulent transaction. Although it generated 890 false positives, the cost of these false alarms was small compared with the potential fraud losses avoided.
+
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.55\textwidth]{figures/7_model_development_and_evaluation/confusion_matrix_lgbm.png}
+\caption{Confusion matrix of the selected LightGBM model on the test set}
+\label{fig:lgbm_confusion_matrix}
+\end{figure}
+
+Beyond predictive performance, model interpretability is important for translating the model into risk-policy recommendations. Figure~\ref{fig:lgbm-feature-importance} shows the most important features used by the selected LightGBM model.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/7_model_development_and_evaluation/feature_importance_lgbm.png}
+\caption{Top feature importances of the selected LightGBM model}
+\label{fig:lgbm-feature-importance}
+\end{figure}
+
+These important features connect the final model back to the engineered risk signals discussed in Section~\ref{sec:feature_engineering}, such as transaction amount, balance-related indicators, velocity features, and contextual risk signals.
+
+The final model choice reflects the main business objective of the project: reducing fraud loss while keeping customer friction manageable. LightGBM provided the best cost-based performance, very high recall, and a reasonable precision level for a fraud review queue. Therefore, this model and threshold were used as the production configuration for real-time fraud scoring in the deployment stage discussed in Section~\ref{sec:deployment-architecture}.

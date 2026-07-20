@@ -1,0 +1,19 @@
+{
+  "seed_event_count": 20,
+  "profiles": [
+    {
+      "profile": "smoke",
+      "event_count": 100,
+      "alerts_emitted": 35,
+      "parse_like_ms": 2.286,
+      "rule_eval_ms": 0.628,
+      "window_eval_ms": 0.412,
+      "total_ms": 3.331,
+      "throughput_eps": 30021.916,
+      "rule_p50_ms": 0.0044,
+      "rule_p95_ms": 0.009705,
+      "tumbling_windows": 1,
+      "sliding_windows": 2
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+\begin{table}[H]
+\centering
+\caption{Model Training Configuration and Training Time}
+\label{tab:model_training_config}
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.24\linewidth} c >{\raggedright\arraybackslash}p{0.46\linewidth}}
+\hline
+\textbf{Model} & \textbf{Training Time (s)} & \textbf{Main Configuration} \\
+\hline
+Logistic Regression & 6.66 & Class weight = balanced \\
+Random Forest & 178.13 & 100 trees, max depth = 15, class weight = balanced \\
+XGBoost & 21.80 & 100 estimators, max depth = 6, scale\_pos\_weight = 773.67 \\
+LightGBM & 21.97 & 200 estimators, num leaves = 31, scale\_pos\_weight = 773.67 \\
+\hline
+\end{tabular}
+\end{table}

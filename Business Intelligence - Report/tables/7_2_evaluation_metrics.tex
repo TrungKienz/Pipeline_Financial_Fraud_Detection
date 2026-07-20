@@ -1,0 +1,20 @@
+\begin{table}[H]
+\centering
+\caption{Evaluation Metrics for Imbalanced Fraud Detection}
+\label{tab:evaluation_metrics}
+\begin{tabular}{
+    m{0.18\linewidth}
+    m{0.32\linewidth}
+    m{0.38\linewidth}
+}
+\hline
+\textbf{Metric} & \textbf{Definition} & \textbf{Business Interpretation} \\
+\hline
+AUC-PR & Area under the precision-recall curve & Measures fraud detection quality under class imbalance \\
+Precision & $\frac{TP}{TP + FP}$ & Share of flagged transactions that are truly fraudulent \\
+Recall & $\frac{TP}{TP + FN}$ & Share of actual fraud cases successfully detected \\
+F1-score & $2 \times \frac{Precision \times Recall}{Precision + Recall}$ & Balance between precision and recall \\
+Confusion Matrix & TP, FP, TN, FN counts & Shows the types of correct and incorrect decisions \\
+\hline
+\end{tabular}
+\end{table}

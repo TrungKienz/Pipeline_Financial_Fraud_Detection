@@ -1,0 +1,8 @@
+\section{Executive Summary}
+Payment fraud is a major risk for e-commerce platforms because even a small percentage of fraudulent transactions can lead to significant financial losses and damage customer trust. In this project, our team develops a real-time fraud detection system that helps an e-commerce platform identify suspicious transactions and decide whether each transaction should be approved, manually reviewed, or automatically blocked.
+
+The project uses the required Kaggle Online Payments Fraud Detection Dataset and extends it with synthetic contextual data, such as customer account age, device/browser information, address mismatch indicators, failed payment attempts, and time-of-day behavior. This additional data is designed to make the fraud detection problem more realistic and closer to real business conditions.
+
+From a business perspective, the main objective is not only to maximize model accuracy, but also to balance two competing goals: preventing fraudulent transactions and minimizing unnecessary friction for legitimate customers. Therefore, the project evaluates model performance using business-relevant KPIs, including fraud rate, precision, recall, false positive rate, financial loss avoided, cost of false alarms, and manual review rate.
+
+The final output of the project is a fraud risk scoring system. Based on the predicted fraud probability, transactions are categorized into three risk levels. Low-risk transactions are approved automatically, medium-risk transactions are sent to manual review, and high-risk transactions are automatically blocked. This risk-based policy allows the platform to reduce financial loss while maintaining a reasonable customer experience.

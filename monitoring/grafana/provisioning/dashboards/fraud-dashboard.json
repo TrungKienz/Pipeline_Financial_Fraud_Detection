@@ -1,0 +1,53 @@
+{
+  "annotations": { "list": [ { "builtIn": 1, "datasource": { "type": "grafana", "uid": "-- Grafana --" }, "enable": true, "hide": true, "name": "Annotations & Alerts", "type": "dashboard" } ] },
+  "editable": true,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto" },
+      "title": "Task Throughput (tasks/s)",
+      "type": "stat",
+      "targets": [ { "expr": "sum(rate(metrics_executor_completedTasks_total[1m])) or vector(0)", "refId": "A" } ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 0 },
+      "id": 4,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto" },
+      "title": "Completed Tasks Total",
+      "type": "stat",
+      "targets": [ { "expr": "sum(metrics_executor_completedTasks_total) or vector(0)", "refId": "A" } ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
+      "id": 5,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto" },
+      "title": "JVM Heap Memory (MB)",
+      "type": "stat",
+      "targets": [ { "expr": "sum(metrics_executor_JVMHeapMemory_bytes) / 1048576 or vector(0)", "refId": "A" } ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 6 },
+      "id": 3,
+      "title": "Spark Executor Metrics",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "sum(rate(metrics_executor_completedTasks_total[1m]))", "legendFormat": "Task throughput (tasks/s)", "refId": "A" },
+        { "expr": "sum(metrics_executor_JVMHeapMemory_bytes) / 1048576", "legendFormat": "JVM heap (MB)", "refId": "B" },
+        { "expr": "sum(rate(metrics_executor_totalShuffleRead_bytes_total[1m])) / 1048576", "legendFormat": "Shuffle read (MB/s)", "refId": "C" },
+        { "expr": "sum(rate(metrics_executor_totalShuffleWrite_bytes_total[1m])) / 1048576", "legendFormat": "Shuffle write (MB/s)", "refId": "D" }
+      ],
+      "options": { "legend": { "displayMode": "table", "placement": "right" } }
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "title": "Fraud Detection Spark Metrics",
+  "uid": "fraud-detection-metrics",
+  "version": 8
+}

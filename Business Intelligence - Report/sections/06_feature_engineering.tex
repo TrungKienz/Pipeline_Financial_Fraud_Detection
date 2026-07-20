@@ -1,0 +1,183 @@
+\section{Feature Engineering}
+\label{sec:feature_engineering}
+
+Feature engineering is a critical phase in the construction of the fraud detection system, bridging the raw transaction stream and the machine learning model. Because raw transaction data typically lacks the relational context needed to capture complex fraud patterns, features must be engineered to capture the financial characteristics of individual transactions, static behavioral context of the customer and their device, and dynamic velocity metrics reflecting short-term historical activity. In mobile money environments like PaySim \citep{lopez2016paysim}, fraudulent agents often attempt to deplete assets or bypass limits through structured transfers, which necessitates both static and stateful aggregations.
+
+\subsection{Risk Signal Features}
+
+The engineered features can be categorized into three primary categories based on the source and nature of the signals they capture: financial, behavioral, and dynamic velocity.
+
+\subsubsection{Financial and Balance-Based Features}
+These features represent the immediate financial consequences of a transaction on the sender and receiver accounts. They are designed to capture the structural signatures of fraud, such as account takeover and rapid cash-out:
+\begin{itemize}
+    \item \textbf{Sender/Receiver Balance Delta:} Calculates the net change in balances after the transaction. A significant mismatch between the transaction amount and the balance delta can indicate systemic errors or tampering:
+    \begin{align}
+        \Delta_{\text{sender}}   &= \text{oldbalance\_org} - \text{newbalance\_orig}, \label{eq:delta-sender}\\
+        \Delta_{\text{receiver}} &= \text{newbalance\_dest} - \text{oldbalance\_dest}. \label{eq:delta-receiver}
+    \end{align}
+    \item \textbf{Sender Depletion Ratio:} The fraction of the sender's balance transferred in the transaction, bounded between $0.0$ and $1.0$. Fraudulent agents targeting account drainage typically exhibit a depletion ratio close to $1.0$:
+    \begin{equation}
+        R_{\text{depletion}} = \min\left(\frac{\text{amount}}{\text{oldbalance\_org}},\, 1.0\right).
+        \label{eq:depletion}
+    \end{equation}
+    \item \textbf{Amount-to-Balance Ratio:} The transaction amount relative to the combined historical balance of both originating and destination accounts, providing context on the scale of the transfer relative to the wealth of the interacting parties:
+    \begin{equation}
+        R_{\text{amount/balance}} = \min\left(\frac{\text{amount}}{\text{oldbalance\_org} + \text{oldbalance\_dest}},\, 1.0\right).
+        \label{eq:amount-balance}
+    \end{equation}
+    We note that pooling the sender and receiver balances in the denominator dilutes the account-drainage signal, because a large destination balance can mask a near-complete depletion of the sender. The account-drainage signal itself is therefore captured more cleanly by the sender-only depletion ratio of \cref{eq:depletion}; the two features are complementary rather than redundant.
+    \item \textbf{Balance Discrepancies:} Measures the mismatch between the expected mathematical balance updates and the actual recorded balances. Fraudulent activities often manifest as abnormal balance updates (e.g., recipient balance updating without a corresponding deduction, or vice versa):
+    \begin{align}
+        \text{Discrepancy}_{\text{sender}}   &= (\text{oldbalance\_org} - \text{amount}) - \text{newbalance\_orig}, \label{eq:disc-sender}\\
+        \text{Discrepancy}_{\text{receiver}} &= (\text{oldbalance\_dest} + \text{amount}) - \text{newbalance\_dest}. \label{eq:disc-receiver}
+    \end{align}
+    \item \textbf{Balance-Inconsistency Flags (\texttt{sender\_balance\_inconsistent}, \texttt{receiver\_balance\_inconsistent}):} Binary companions to the signed discrepancies of \crefrange{eq:disc-sender}{eq:disc-receiver}, each set when the magnitude of the corresponding discrepancy exceeds a small numerical tolerance, and only for the transaction types that debit the sender or credit the receiver respectively. They give the tree-based models a threshold-free indicator that a balance update is tampered or mis-recorded, independent of the raw discrepancy scale.
+    \item \textbf{Merchant Destination Indicator ($I_{\text{merchant}}$, \texttt{dest\_is\_merchant}):} A binary flag indicating whether the destination account is a merchant (identified by the prefix `M'). Merchants in mobile money networks represent sinks that cannot initiate transfers or cash-outs, and in the PaySim simulator, merchant destinations are never targeted by fraudulent agents.
+    \item \textbf{Post-Transaction Zero-Balance Flag (\texttt{is\_zero\_balance\_after}):} A binary flag set when the originating account balance is exactly zero after the transaction, capturing the complete-drainage pattern characteristic of account takeover.
+    \item \textbf{Self-Transfer Flag (\texttt{is\_same\_sender\_receiver}):} A binary flag indicating whether the originating and destination identifiers coincide, which flags structurally anomalous or malformed transfers.
+\end{itemize}
+
+\noindent\textit{A caveat on balance-based features.} The balance and zero-balance features above are unusually predictive on PaySim for a mechanical reason rather than a behavioral one: in the simulator, fraudulent agents drain the origin account completely, so \texttt{newbalance\_orig} is driven to zero and the derived balance discrepancies take on characteristic values whenever a transaction is fraudulent. These features therefore partly encode the label itself---a direct artifact of the simulator's cash-out mechanics \citep{lopez2016paysim} rather than a behavioral signal.
+% TODO: add a dedicated academic source documenting PaySim balance-leakage (currently justified only via the simulator mechanics in lopez2016paysim).
+As a result, the balance-derived signals should be read as simulator artifacts that inflate apparent performance, and the near-perfect metrics reported in \cref{sec:model_dev} are correspondingly optimistic relative to what could be expected on genuine e-commerce payment data. We revisit this explicitly when interpreting the results.
+
+\subsubsection{Static Behavioral and Device Features}
+To capture context beyond raw financial quantities, the pipeline attaches synthetic behavioral and device attributes to each transaction. Because PaySim contains no genuine e-commerce context, these attributes are \emph{simulated}; the essential design requirement is that every one of them must be computable at serving time, where the fraud label is unknown. All attributes below are therefore generated \emph{independently of the \texttt{isFraud} label}: each is a deterministic function of a per-transaction hash of \texttt{event\_id}, and wherever a field is intended to correlate with risk, that correlation is induced through a label-free \emph{risk proxy} rather than through the label itself. This is a deliberate correction of an earlier design in which these fields were drawn from label-conditioned distributions and thereby leaked the target.
+
+The risk proxy $\rho \in [0,1]$ is computed solely from real transaction attributes---transaction type, amount, sender depletion, and time of day:
+\begin{equation}
+  \rho = 0.35\,\mathbf{1}[\text{type} \in \{\text{TRANSFER}, \text{CASH\_OUT}\}] + 0.25\min\!\left(\tfrac{\text{amount}}{200{,}000},\, 1\right) + 0.25\,R_{\text{depletion}} + 0.15\,I_{\text{night}}.
+  \label{eq:risk-proxy}
+\end{equation}
+Because $\rho$ never reads \texttt{isFraud}, it takes the same value during offline training and online serving, eliminating both target leakage and train--serve skew.
+
+The device and channel categoricals follow from $\rho$ and the transaction hash. The \texttt{browser} field is drawn near-uniformly and carries no risk signal (an approximately flat fraud rate across categories, consistent with \cref{sec:eda}); the \texttt{device\_type} and \texttt{country} distributions are mildly skewed by $\rho$ (higher-risk transactions lean toward mobile/tablet devices and a subset of countries), so any category-level fraud-rate difference is an indirect reflection of the underlying real risk drivers rather than a circular encoding of the label.
+
+The four risk flags---\texttt{new\_device\_flag}, \texttt{shipping\_billing\_mismatch}, \texttt{ip\_billing\_country\_mismatch}, and \texttt{failed\_payment\_attempts\_24h}---are emitted by comparing an independent uniform hash draw $u \in [0,1)$ against a probability that rises with $\rho$ (for instance, \texttt{new\_device\_flag} fires with probability $0.05 + 0.35\,\rho$). Their discriminative power is thus a consequence of the shared real risk drivers in \cref{eq:risk-proxy}, not of the label; whatever signal they carry is by construction already present in the financial and type features from which $\rho$ is built, so they are deliberately \emph{non-leaking} and, as the feature-importance analysis confirms, of low standalone importance. That the feature vector is invariant to flipping the label is enforced by an automated regression test (\texttt{tests/test\_features\_no\_leakage.py}). The individual features are defined as follows:
+\begin{itemize}
+    \item \textbf{Time-of-Day Features:} From the sequential PaySim \texttt{step} index (an hourly counter) we derive the hour of the day, $H = \text{step} \pmod{24}$, and, because fraud in the simulation is concentrated in low-activity hours, a night-transaction indicator:
+    \begin{equation}
+        I_{\text{night}} = \begin{cases}
+        1 & \text{if } H \ge 22 \text{ or } H \le 6,\\
+        0 & \text{otherwise.}
+        \end{cases}
+        \label{eq:night}
+    \end{equation}
+    \item \textbf{Device and Country Mismatch Flags:} Mismatch indicators represent physical discrepancies between different entities in a transaction:
+    \begin{itemize}
+        \item \texttt{shipping\_billing\_mismatch}: Indicates whether the shipping address differs from the card's billing address.
+        \item \texttt{ip\_billing\_country\_mismatch}: Indicates whether the country of the transaction IP address differs from the country where the billing instrument was registered.
+        \item \texttt{new\_device\_flag}: Indicates if the transaction is initiated from a device not registered in the customer's historical device whitelist.
+    \end{itemize}
+    \item \textbf{Payment Failure History:} The count of failed payment attempts in the last 24 hours (\texttt{failed\_payment\_attempts\_24h}), reflecting potential brute-force or credential stuffing behavior.
+\end{itemize}
+
+\noindent\textit{A caveat on time-based features.}\;\textbf{(i) The raw \texttt{step} index.} The field \texttt{step} is a monotonic simulation timestamp. Retaining it as a model input allows the classifier to exploit the \emph{position} of a transaction within the simulated timeline rather than any genuine transaction behavior, which is a form of temporal leakage that would not transfer to live traffic. The methodologically correct design keeps only the derived \texttt{hour\_of\_day} and \texttt{is\_night\_transaction} and discards the raw index. We must state transparently, however, that in the experiments reported in \cref{sec:model_dev} the raw \texttt{step} index \emph{remains} in the feature matrix---the feature-importance analysis of the selected model (\cref{fig:lgbm-feature-importance}) ranks it among the most influential features---so the metrics reported there are optimistic. Removing \texttt{step} and retraining is recorded as required follow-up work in \cref{sec:model_dev}.
+
+\noindent\textbf{(ii) Time of day as a simulator artifact.} Even after the raw index is discarded, the retained \texttt{hour\_of\_day} and \texttt{is\_night\_transaction} inherit a residual PaySim artifact: legitimate transactions in the simulator follow a pronounced diurnal rhythm whereas fraudulent ones are distributed roughly uniformly across \texttt{step}, so during low-volume night hours the small legitimate denominator mechanically inflates the observed fraud rate. The elevated night-time fraud rate seen in the exploratory analysis (\cref{sec:eda}) is therefore largely a property of the simulator's temporal design rather than evidence of genuine nocturnal fraud behavior. We also note that the window of \cref{eq:night} is intentionally broad: the EDA locates the fraud-rate spike in roughly the 02:00--05:00 range, so this definition is a conservative choice that also admits hours carrying little excess risk and thereby mildly dilutes the signal; narrowing the window is deferred to the retraining step to avoid changing the deployed feature definition retroactively.
+
+\subsubsection{Dynamic Velocity Features}
+Velocity features are crucial for identifying automated attacks, structuring, or rapid asset depletion. These features are computed dynamically using sliding time-windows maintained in the Redis cache during streaming inference and simulated in memory during training:
+\begin{itemize}
+    \item \textbf{Hourly Transaction Count ($V_{1\text{h}}$):} The count of transactions initiated by the sender account in the last 1 hour (3600 seconds), capturing rapid-fire transaction bursts.
+    \item \textbf{Time Since Last Purchase ($T_{\text{idle}}$):} The time interval (in seconds) since the sender's last transaction, default to 86,400 seconds (1 day) if no prior history exists. Very short idle times indicate automated scripts.
+    \item \textbf{Sender/Receiver Window Aggregates:} Total transaction count and sum of amounts in the fan-out window (900 seconds) and fan-in window (900 seconds) to identify money mule hubs.
+    \item \textbf{Inbound-to-Cashout Ratio ($R_{\text{cashout}}$):} If the current transaction is a cash-out, this represents the ratio of the cash-out amount to the total inbound funds received via transfers in the last 30 minutes (1800 seconds). A high ratio indicates a typical money laundering siphon.
+    \item \textbf{New-Counterparty Flag (\texttt{is\_new\_counterparty}):} A flag indicating that the sender has not previously transacted with the current destination within the observed history window, capturing first-contact transfers that are common in mule and cash-out chains.
+\end{itemize}
+
+To prevent train--serve skew, the offline training pipeline and the online Redis-backed inference path use a single shared implementation of the window definitions above (identical window lengths, event-ordering, and default values for cold-start accounts). The in-memory computation used during training is validated to reproduce the streaming computation on the same event sequence, so a feature vector scored offline is numerically identical to the one the deployed service would produce for the same transaction.
+
+In the reported offline experiments these velocity features are genuinely populated by the shared state simulator rather than left at their cold-start defaults, so they are true inputs to the batch model rather than streaming-only quantities. Nonetheless they rank low in the feature-importance analysis of the selected model (\cref{fig:lgbm-feature-importance}) and do not appear in its top tier. This is expected on PaySim: the dataset provides only an hour-granular time index (one \texttt{step} spans a full hour), which leaves the short sub-hour windows (900--3600 seconds) sparsely populated, so the velocity signals carry little discriminative weight on this substrate even though they are precisely the signals designed to generalize to a real high-frequency transaction stream.
+
+\subsection{Encoding and Scaling}
+
+To prepare the feature set for downstream estimators like Random Forests \citep{breiman2001random} or Logistic Regression, encoding and normalization steps are applied using the \texttt{scikit-learn} library \citep{pedregosa2011scikit}:
+
+\begin{itemize}
+    \item \textbf{Categorical Encoding:} Categorical attributes, including the transaction type (\texttt{type}), web browser (\texttt{browser}), user device type (\texttt{device\_type}), and billing country (\texttt{country}), are one-hot encoded. For a categorical variable with $k$ unique levels, $k$ separate binary indicator columns are generated.
+    \item \textbf{Numerical Feature Scaling:} Continuous inputs (such as \texttt{amount}, balance deltas, and velocity aggregates) are scaled to have a zero mean and unit variance (Z-score normalization) to ensure stability for distance-based and gradient-descent algorithms:
+    \begin{equation}
+        z = \frac{x - \mu}{\sigma}
+    \end{equation}
+    where $\mu$ and $\sigma$ represent the mean and standard deviation of each feature, estimated exclusively from the training partition and applied to the validation and test sets to prevent data leakage.
+\end{itemize}
+
+\subsection{Handling Class Imbalance}
+\label{sec:handling_class_imbalance}
+
+Financial fraud datasets suffer from extreme class imbalance. In the PaySim dataset, only $0.13\%$ of transactions are labeled as fraudulent. Training classifiers directly on such skewed distributions leads to models that bias heavily toward the majority class, producing high false negative rates.
+
+To address this, we apply the \textbf{Synthetic Minority Over-sampling Technique (SMOTE)} \citep{chawla2002smote}, as implemented in the \texttt{imbalanced-learn} library \citep{lemaitre2017imblearn}:
+\begin{enumerate}
+    \item SMOTE identifies the $k$-nearest neighbors of each minority class (fraudulent) instance.
+    \item It synthesizes new minority samples by interpolating along the line segment connecting the instance and one of its randomly selected neighbors.
+    \item The training minority class is oversampled to a target ratio (e.g., $10\%$ of the majority class), providing sufficient signal for the decision tree split boundaries without the severe overfitting associated with simple random oversampling.
+\end{enumerate}
+
+Two methodological caveats apply to this choice. First, the feature matrix contains many binary and one-hot-encoded columns (\cref{tab:features_summary}), and standard SMOTE interpolates linearly between neighbors, which produces fractional synthetic values (e.g., $0.37$) for attributes that are only meaningful as $0$ or $1$. A categorically aware variant such as SMOTE-NC \citep{chawla2002smote}, which resamples continuous and categorical columns separately, is more appropriate for a mixed feature space and would be the preferred choice in a production revision.
+
+Second, and more importantly, SMOTE is an oversampling remedy for imbalance and should not be stacked with an instance-reweighting remedy from the cost-sensitive learning family \citep{elkan2001foundations}, yet the configuration reported in \cref{sec:model_dev} applies both to \emph{every} model. A single SMOTE pass lifts the training minority share to roughly $10\%$, and on top of that resampled set all four estimators additionally carry a class-weighting mechanism: Logistic Regression and Random Forest are fitted with \texttt{class\_weight="balanced"}, while XGBoost and LightGBM set \texttt{scale\_pos\_weight} to the \emph{original} imbalance ratio ($\approx 773.67$). The severity differs by model. The \texttt{"balanced"} option recomputes its weights from the data actually presented to the estimator---here the already-resampled set---yielding an effective positive-to-negative ratio of only about $9$, so the double correction is comparatively mild for those two models. The gradient-boosting models, by contrast, fix \texttt{scale\_pos\_weight} to the pre-SMOTE prevalence of $0.13\%$; stacking that weight on a set already balanced to $10\%$ over-emphasizes the positive class by roughly two orders of magnitude beyond what the resampled data warrants. The visible consequence in \cref{sec:model_dev} is that recall is driven to near $1.0$ while precision collapses and the cost-optimal decision threshold falls to a very small value.
+
+The methodologically correct design applies exactly one remedy---resampling \emph{or} class weighting---and, if weighting is nonetheless used after resampling, recomputes the weight from the \emph{resampled} prevalence (a ratio of $\approx 9$, not $773.67$). Being transparent about the flaw does not excuse leaving it in place; we therefore recommend retraining under a single, correctly parameterized imbalance remedy. The original configuration and its reported numbers are retained here only for comparability across the model-selection experiments, and the corrected retraining is recorded as required follow-up work in \cref{sec:model_dev}.
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{6pt}
+\renewcommand{\arraystretch}{1.2}
+\caption{Feature engineering summary. $^{\dagger}$\texttt{step} is retained in the feature matrix used for the reported results but is a temporal-leakage feature scheduled for removal on retraining (\cref{sec:model_dev}).}
+\label{tab:features_summary}
+\begin{tabularx}{\textwidth}{@{}l >{\raggedright\arraybackslash}X l@{}}
+\toprule
+\textbf{Feature Group} & \textbf{Feature Names} & \textbf{Data Type / Encoding} \\
+\midrule
+Financial & \texttt{amount}, \texttt{sender\_balance\_delta}, \texttt{receiver\_balance\_delta} & Continuous (Scaled) \\
+          & \texttt{sender\_depletion\_ratio}, \texttt{amount\_to\_balance\_ratio} & Continuous (Scaled) \\
+          & \texttt{sender\_balance\_discrepancy}, \texttt{receiver\_balance\_discrepancy} & Continuous (Scaled) \\
+          & \texttt{sender\_balance\_inconsistent}, \texttt{receiver\_balance\_inconsistent} & Binary (0 / 1) \\
+          & \texttt{is\_zero\_balance\_after}, \texttt{is\_same\_sender\_receiver}, \texttt{dest\_is\_merchant} & Binary (0 / 1) \\
+\midrule
+Behavioral & \texttt{step}$^{\dagger}$, \texttt{hour\_of\_day}, \texttt{failed\_payment\_attempts\_24h} & Continuous (Scaled) \\
+           & \texttt{is\_night\_transaction}, \texttt{new\_device\_flag} & Binary (0 / 1) \\
+           & \texttt{shipping\_billing\_mismatch}, \texttt{ip\_billing\_country\_mismatch} & Binary (0 / 1) \\
+\midrule
+Velocity & \texttt{velocity\_transactions\_1h}, \texttt{time\_since\_last\_purchase} & Continuous (Scaled) \\
+         & \texttt{sender\_recent\_txn\_count}, \texttt{sender\_recent\_total\_amount} & Continuous (Scaled) \\
+         & \texttt{receiver\_recent\_txn\_count}, \texttt{receiver\_recent\_total\_amount} & Continuous (Scaled) \\
+         & \texttt{inbound\_to\_cashout\_ratio} & Continuous (Scaled) \\
+         & \texttt{is\_new\_counterparty} & Binary (0 / 1) \\
+\midrule
+Categorical & \texttt{type}, \texttt{browser}, \texttt{device\_type}, \texttt{country} & One-Hot Encoded \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+
+\subsection{Summary of Known Limitations in the Feature Set}
+\label{sec:fe_caveats}
+
+The caveats raised throughout this section are consolidated in \cref{tab:fe_caveats}, which states, for each issue, the direction in which it distorts the reported metrics and the corrective action scheduled for retraining. The purpose of the table is to make the gap between the reported results and a deployment-ready configuration explicit rather than to justify it.
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{6pt}
+\renewcommand{\arraystretch}{1.25}
+\caption{Known limitations of the feature set, their effect on the reported metrics, and the planned remedy.}
+\label{tab:fe_caveats}
+\begin{tabularx}{\textwidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Issue} & \textbf{Effect on reported metrics} & \textbf{Planned remedy} \\
+\midrule
+Balance-derived features & Partly encode the label through the simulator's complete-drainage mechanics; inflate precision and recall. & Report results with and without the balance block to quantify the contribution. \\
+Raw \texttt{step} index & Temporal leakage: the model can exploit position in the simulated timeline. Ranked top-1 in \cref{fig:lgbm-feature-importance}. & Drop \texttt{step}; retain only \texttt{hour\_of\_day} and \texttt{is\_night\_transaction}. \\
+Night-hour window & $H \ge 22$ or $H \le 6$ is broader than the 02:00--05:00 spike, diluting the signal. & Narrow the window to the empirically observed range. \\
+Risk-proxy synthetic fields & Label-independent by construction (\cref{eq:risk-proxy}); no leakage and no train--serve skew, but their signal is simulated and largely redundant with the real risk drivers they derive from. & Re-establish genuine predictive value on real e-commerce traffic before any operational claim. \\
+SMOTE $+$ class weighting & Double imbalance correction; drives recall to $\approx 1.0$, collapses precision, and pushes the cost-optimal threshold to $\approx 0.001$. & Apply a single remedy, or recompute the weight from the resampled prevalence ($\approx 9$, not $773.67$). \\
+Sub-hour velocity windows & Sparsely populated on an hour-granular index; low measured importance despite being the signals designed to generalize. & Validate on a genuinely high-frequency transaction stream. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\textbf{Critical Partitioning Rule:} To ensure realistic performance evaluation, SMOTE is applied \textbf{only} to the training dataset. The validation and test sets are left in their original imbalanced state, ensuring that the reported metrics (Precision, Recall, F1-score) reflect the true business performance of the deployed system.

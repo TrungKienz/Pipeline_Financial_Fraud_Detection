@@ -1,0 +1,15 @@
+\begin{table}[H]
+\centering
+\caption{Test-Set Cost Breakdown by Model}
+\label{tab:test_cost_breakdown}
+\begin{tabular}{lrrrr}
+\hline
+\textbf{Model} & \textbf{FP} & \textbf{FN} & \textbf{Missed Fraud Cost} & \textbf{False Alarm Cost} \\
+\hline
+Logistic Regression & 48,125 & 0 & 0.00 & 240,625.00 \\
+Random Forest & 57,202 & 0 & 0.00 & 286,010.00 \\
+XGBoost & 24,005 & 1 & 123,194.95 & 120,025.00 \\
+LightGBM & 890 & 1 & 151.00 & 4,450.00 \\
+\hline
+\end{tabular}
+\end{table}

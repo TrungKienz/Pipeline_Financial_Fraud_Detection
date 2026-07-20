@@ -1,0 +1,112 @@
+{
+  "csv_path": "F:\\Project\\Bigdata\\Data\\archive (2)\\PS_20174392719_1491204439457_log.csv",
+  "events_processed": 200,
+  "alerts_emitted": 123,
+  "top_alerts": [
+    {
+      "event_id": "8e4e95b1340e04198a770e1bf5d3669051a1ba3c",
+      "risk_score": 0.15,
+      "severity": "low",
+      "triggered_rules": [
+        "receiver_balance_inconsistency"
+      ]
+    },
+    {
+      "event_id": "c2a7e1357e52ddddaba52bb540af68feb6e94636",
+      "risk_score": 0.3,
+      "severity": "low",
+      "triggered_rules": [
+        "sender_balance_inconsistency"
+      ]
+    },
+    {
+      "event_id": "50af9cdc839b0505b421a5e1b058e618ddf44d75",
+      "risk_score": 0.3,
+      "severity": "low",
+      "triggered_rules": [
+        "sender_balance_inconsistency"
+      ]
+    },
+    {
+      "event_id": "4db4c7c5f18b26dabedb1676f56af42c9ad1a993",
+      "risk_score": 0.3,
+      "severity": "low",
+      "triggered_rules": [
+        "sender_balance_inconsistency"
+      ]
+    },
+    {
+      "event_id": "1ac15105b750fc8eedf0db17a0170387ed585844",
+      "risk_score": 0.75,
+      "severity": "high",
+      "triggered_rules": [
+        "high_amount_transfer",
+        "sender_balance_inconsistency"
+      ]
+    },
+    {
+      "event_id": "a9ec79f2b25e267eff1231e1795f6270a6bf8662",
+      "risk_score": 0.3,
+      "severity": "low",
+      "triggered_rules": [
+        "sender_balance_inconsistency"
+      ]
+    },
+    {
+      "event_id": "b9b47fdddfa31848232cacdde24f32d00d7368c6",
+      "risk_score": 0.9,
+      "severity": "high",
+      "triggered_rules": [
+        "high_amount_transfer",
+        "sender_balance_inconsistency",
+        "receiver_balance_inconsistency"
+      ]
+    },
+    {
+      "event_id": "3b67645e7570507f0e9552daf8f8002d962b5707",
+      "risk_score": 0.9,
+      "severity": "high",
+      "triggered_rules": [
+        "high_amount_transfer",
+        "sender_balance_inconsistency",
+        "receiver_balance_inconsistency"
+      ]
+    },
+    {
+      "event_id": "ed06b9dcdb2fa736e202beb852db4a7f253aedb9",
+      "risk_score": 0.3,
+      "severity": "low",
+      "triggered_rules": [
+        "sender_balance_inconsistency"
+      ]
+    },
+    {
+      "event_id": "5392d1877c28b38ccdc27ed1a97a489bf0845d0a",
+      "risk_score": 0.3,
+      "severity": "low",
+      "triggered_rules": [
+        "sender_balance_inconsistency"
+      ]
+    }
+  ],
+  "tumbling_windows": [
+    {
+      "window_start": "2026-01-01T00:00:00+00:00",
+      "window_end": "2026-01-01T00:05:00+00:00",
+      "event_count": 200,
+      "fraud_count": 2,
+      "total_amount": 21701004.38,
+      "fraud_rate": 0.01
+    }
+  ],
+  "sliding_windows": [
+    {
+      "window_start": "2026-01-01T00:00:00+00:00",
+      "window_end": "2026-01-01T00:10:00+00:00",
+      "event_count": 200,
+      "fraud_count": 2,
+      "total_amount": 21701004.38,
+      "fraud_rate": 0.01
+    }
+  ]
+}
