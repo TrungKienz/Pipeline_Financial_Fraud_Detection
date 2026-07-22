@@ -251,6 +251,7 @@ services:
         condition: service_healthy
     volumes:
       - ./dashboard/streamlit:/app
+      - ./monitoring:/app/monitoring
     ports:
       - "8501:8501"
     healthcheck:

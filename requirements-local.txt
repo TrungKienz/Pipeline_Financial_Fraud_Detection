@@ -1,4 +1,4 @@
-kafka-python
+kafka-python==2.2.15
 redis
 cassandra-driver
 fastapi==0.115.0

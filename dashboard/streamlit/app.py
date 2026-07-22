@@ -666,28 +666,16 @@ def render_monitoring_tab(queue_df: pd.DataFrame) -> None:
         st.caption(
             f"Prediction rows: {performance_report.get('prediction_rows', 0)} | Labeled rows: {performance_report.get('labeled_rows', 0)} | Review rows: {performance_report.get('review_rows', 0)}"
         )
-    review_counts = (
-        queue_df.groupby("review_status", as_index=False)
-        .agg(case_count=("event_id", "size"))
-        .sort_values("case_count", ascending=False)
-    )
     label_counts = (
         queue_df.groupby("review_label", as_index=False)
         .agg(case_count=("event_id", "size"))
         .sort_values("case_count", ascending=False)
     )
 
-    m1, m2 = st.columns(2)
-    with m1:
-        st.subheader("Queue Status Mix")
-        fig_status = px.bar(review_counts, x="review_status", y="case_count", template="plotly_dark", color="case_count")
-        fig_status.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", margin=dict(l=0, r=0, t=20, b=0))
-        st.plotly_chart(fig_status, use_container_width=True)
-    with m2:
-        st.subheader("Review Label Mix")
-        fig_label = px.pie(label_counts, names="review_label", values="case_count", hole=0.45, template="plotly_dark")
-        fig_label.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", margin=dict(l=0, r=0, t=20, b=0))
-        st.plotly_chart(fig_label, use_container_width=True)
+    st.subheader("Review Label Mix")
+    fig_label = px.pie(label_counts, names="review_label", values="case_count", hole=0.45, template="plotly_dark")
+    fig_label.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", margin=dict(l=0, r=0, t=20, b=0))
+    st.plotly_chart(fig_label, use_container_width=True)
 
     st.info(
         "Monitoring tab hien tai theo doi workflow analyst dua tren review persistence that. Drift, precision/recall rolling window, va retraining trigger se duoc bo sung o cac phase monitoring tiep theo."
