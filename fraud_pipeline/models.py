@@ -20,6 +20,18 @@ class TransactionEvent:
     newbalance_dest: float
     is_fraud: int
     schema_version: int = 1
+    hour_of_day: int | None = None
+    is_night_transaction: int | None = None
+    customer_account_age_days: float = 0.0
+    browser: str = "unknown"
+    device_type: str = "unknown"
+    new_device_flag: int = 0
+    billing_country: str = "unknown"
+    ip_country: str = "unknown"
+    ip_billing_distance_km: float = 0.0
+    ip_billing_country_mismatch: int = 0
+    shipping_billing_mismatch: int = 0
+    failed_payment_attempts_24h: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -43,6 +55,8 @@ class FraudDecision:
     ml_score: float = 0.0
     ml_model_version: str = "v0"
     triggered_rules: tuple[str, ...] = field(default_factory=tuple)
+    rule_score: float = 0.0
+    decision_threshold: float = 0.5
 
 
 @dataclass(frozen=True)

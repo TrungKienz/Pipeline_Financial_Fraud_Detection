@@ -75,6 +75,18 @@ def integrate_logical_streams(
         "newbalanceOrig": float(_value(sender_payload, "newbalanceOrig")),
         "oldbalanceDest": float(_value(receiver_payload, "oldbalanceDest")),
         "newbalanceDest": float(_value(receiver_payload, "newbalanceDest")),
+        "hour_of_day": transaction_payload.get("hour_of_day"),
+        "is_night_transaction": transaction_payload.get("is_night_transaction"),
+        "customer_account_age_days": transaction_payload.get("customer_account_age_days", 0.0),
+        "browser": transaction_payload.get("browser", "unknown"),
+        "device_type": transaction_payload.get("device_type", "unknown"),
+        "new_device_flag": transaction_payload.get("new_device_flag", 0),
+        "billing_country": transaction_payload.get("billing_country", "unknown"),
+        "ip_country": transaction_payload.get("ip_country", "unknown"),
+        "ip_billing_distance_km": transaction_payload.get("ip_billing_distance_km", 0.0),
+        "ip_billing_country_mismatch": transaction_payload.get("ip_billing_country_mismatch", 0),
+        "shipping_billing_mismatch": transaction_payload.get("shipping_billing_mismatch", 0),
+        "failed_payment_attempts_24h": transaction_payload.get("failed_payment_attempts_24h", 0.0),
         "isFraud": int(_value(transaction_payload, "isFraud")),
         "schema_version": int(transaction_payload.get("schema_version", 1)),
     }
@@ -96,4 +108,24 @@ def integrated_payload_to_transaction_event(payload: Mapping[str, Any]) -> Trans
         newbalance_dest=float(_value(payload, "newbalanceDest")),
         is_fraud=int(_value(payload, "isFraud")),
         schema_version=int(payload.get("schema_version", 1)),
+        hour_of_day=(
+            int(payload["hour_of_day"])
+            if payload.get("hour_of_day") is not None
+            else int(_value(payload, "step")) % 24
+        ),
+        is_night_transaction=(
+            int(payload["is_night_transaction"])
+            if payload.get("is_night_transaction") is not None
+            else None
+        ),
+        customer_account_age_days=float(payload.get("customer_account_age_days") or 0.0),
+        browser=str(payload.get("browser") or "unknown"),
+        device_type=str(payload.get("device_type") or "unknown"),
+        new_device_flag=int(payload.get("new_device_flag") or 0),
+        billing_country=str(payload.get("billing_country") or "unknown"),
+        ip_country=str(payload.get("ip_country") or "unknown"),
+        ip_billing_distance_km=float(payload.get("ip_billing_distance_km") or 0.0),
+        ip_billing_country_mismatch=int(payload.get("ip_billing_country_mismatch") or 0),
+        shipping_billing_mismatch=int(payload.get("shipping_billing_mismatch") or 0),
+        failed_payment_attempts_24h=float(payload.get("failed_payment_attempts_24h") or 0.0),
     )

@@ -227,6 +227,8 @@ services:
       SPARK_DRIVER_MEMORY: 1g
       SPARK_EXECUTOR_MEMORY: 1g
       PIPELINE_STARTING_OFFSETS: earliest
+      PIPELINE_MAX_OFFSETS_PER_TRIGGER: 10000
+      REQUIRE_ML_ARTIFACT: "true"
       PYTHONUNBUFFERED: 1
     volumes:
       - ./fraud_pipeline:/opt/project/fraud_pipeline

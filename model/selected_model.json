@@ -1,7 +1,5 @@
 {
-  "model_tag": "lgbm",
-  "model_version": "v1_paysim_lgbm",
-  "model_type": "LGBMClassifier",
-  "optimal_threshold": 0.0010496136308604206,
-  "selection_metric": "minimum_validation_business_cost"
+  "artifact_path": "artifacts/fraud_pipeline_selected.joblib",
+  "artifact_format_version": 2,
+  "status": "requires_training_from_transactions_cleaned_parquet"
 }

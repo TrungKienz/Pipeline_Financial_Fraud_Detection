@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 from typing import Any
 
+from .config import PipelineConfig
 from .models import AccountStateUpdate, FraudDecision, TransactionEvent, WindowMetric
 
 
@@ -21,6 +22,18 @@ def transaction_to_dict(event: TransactionEvent) -> dict[str, Any]:
         "amount": event.amount,
         "nameOrig": event.name_orig,
         "nameDest": event.name_dest,
+        "hour_of_day": event.hour_of_day,
+        "is_night_transaction": event.is_night_transaction,
+        "customer_account_age_days": event.customer_account_age_days,
+        "browser": event.browser,
+        "device_type": event.device_type,
+        "new_device_flag": event.new_device_flag,
+        "billing_country": event.billing_country,
+        "ip_country": event.ip_country,
+        "ip_billing_distance_km": event.ip_billing_distance_km,
+        "ip_billing_country_mismatch": event.ip_billing_country_mismatch,
+        "shipping_billing_mismatch": event.shipping_billing_mismatch,
+        "failed_payment_attempts_24h": event.failed_payment_attempts_24h,
         "isFraud": event.is_fraud,
         "schema_version": event.schema_version,
     }
@@ -79,6 +92,8 @@ def fraud_decision_to_dict(event: TransactionEvent, decision: FraudDecision) -> 
         "risk_score": decision.risk_score,
         "severity": decision.severity,
         "ml_score": decision.ml_score,
+        "rule_score": decision.rule_score,
+        "decision_threshold": decision.decision_threshold,
         "ml_model_version": decision.ml_model_version,
         "triggered_rules": list(decision.triggered_rules),
         "is_alert": decision.is_alert,
@@ -98,58 +113,59 @@ def window_metric_to_dict(metric: WindowMetric, window_type: str) -> dict[str, A
 
 
 def risk_rule_event() -> list[dict[str, Any]]:
+    config = PipelineConfig()
     return [
         {
             "rule_id": "account_drain_near_zero_v1",
             "rule_type": "account_drain_threshold",
-            "min_balance_floor": 50000.0,
-            "ratio_threshold": 0.8,
-            "near_zero_balance": 1000.0,
-            "weight": 0.35,
+            "min_balance_floor": config.account_drain_min_balance_floor,
+            "ratio_threshold": config.account_drain_ratio_threshold,
+            "near_zero_balance": config.account_drain_near_zero_balance,
+            "weight": config.account_drain_weight,
             "severity": "high",
         },
         {
             "rule_id": "sender_fan_out_burst_v1",
             "rule_type": "fan_out_threshold",
-            "window_seconds": 900,
-            "distinct_receiver_threshold": 3,
-            "total_amount_threshold": 250000.0,
-            "weight": 0.25,
+            "window_seconds": config.fan_out_window_seconds,
+            "distinct_receiver_threshold": config.fan_out_distinct_receiver_threshold,
+            "total_amount_threshold": config.fan_out_total_amount_threshold,
+            "weight": config.sender_fan_out_weight,
             "severity": "medium",
         },
         {
             "rule_id": "receiver_fan_in_burst_v1",
             "rule_type": "fan_in_threshold",
-            "window_seconds": 900,
-            "distinct_sender_threshold": 3,
-            "total_amount_threshold": 250000.0,
-            "weight": 0.25,
+            "window_seconds": config.fan_in_window_seconds,
+            "distinct_sender_threshold": config.fan_in_distinct_sender_threshold,
+            "total_amount_threshold": config.fan_in_total_amount_threshold,
+            "weight": config.receiver_fan_in_weight,
             "severity": "medium",
         },
         {
             "rule_id": "structured_split_transfer_v1",
             "rule_type": "structuring_threshold",
-            "window_seconds": 900,
-            "count_threshold": 4,
-            "min_amount": 40000.0,
-            "max_amount": 90000.0,
-            "total_amount_threshold": 250000.0,
-            "weight": 0.30,
+            "window_seconds": config.structuring_window_seconds,
+            "count_threshold": config.structuring_count_threshold,
+            "min_amount": config.structuring_min_amount,
+            "max_amount": config.structuring_max_amount,
+            "total_amount_threshold": config.structuring_total_amount_threshold,
+            "weight": config.structured_split_weight,
             "severity": "high",
         },
         {
             "rule_id": "new_counterparty_large_transfer_v1",
             "rule_type": "new_counterparty_threshold",
-            "amount_threshold": 150000.0,
-            "weight": 0.15,
+            "amount_threshold": config.new_counterparty_amount_threshold,
+            "weight": config.new_counterparty_weight,
             "severity": "medium",
         },
         {
             "rule_id": "cashout_after_inbound_chain_v1",
             "rule_type": "cashout_after_inbound_threshold",
-            "window_seconds": 1800,
-            "ratio_threshold": 0.8,
-            "weight": 0.40,
+            "window_seconds": config.cashout_after_inbound_window_seconds,
+            "ratio_threshold": config.cashout_after_inbound_ratio_threshold,
+            "weight": config.cashout_after_inbound_weight,
             "severity": "medium",
         },
     ]

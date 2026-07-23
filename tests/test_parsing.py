@@ -37,6 +37,12 @@ class ParsingTests(unittest.TestCase):
 
         self.assertNotEqual(first.event_id, second.event_id)
 
+    def test_event_id_does_not_depend_on_fraud_label(self) -> None:
+        legitimate = parse_csv_row(sample_row(isFraud="0"))
+        fraudulent = parse_csv_row(sample_row(isFraud="1"))
+
+        self.assertEqual(legitimate.event_id, fraudulent.event_id)
+
     def test_derive_account_state_updates_returns_sender_and_receiver(self) -> None:
         event = parse_csv_row(sample_row())
         updates = derive_account_state_updates(event)
