@@ -1,0 +1,6 @@
+{
+  "event_count": 100,
+  "transaction_csv": "D:\\Code\\Pipeline_Financial_Fraud_Detection\\Data\\logical_sources\\transaction_source.csv",
+  "sender_state_csv": "D:\\Code\\Pipeline_Financial_Fraud_Detection\\Data\\logical_sources\\sender_state_source.csv",
+  "receiver_state_csv": "D:\\Code\\Pipeline_Financial_Fraud_Detection\\Data\\logical_sources\\receiver_state_source.csv"
+}

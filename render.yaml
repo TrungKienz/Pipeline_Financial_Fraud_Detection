@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: fraud-scoring-api
+    runtime: docker
+    dockerfilePath: ./api/Dockerfile
+    plan: free
+    autoDeploy: false
+    healthCheckPath: /health
+    envVars:
+      - key: FRAUD_MODEL_TYPE
+        value: v1
+      - key: API_PREDICTION_LOGGING_ENABLED
+        value: "0"

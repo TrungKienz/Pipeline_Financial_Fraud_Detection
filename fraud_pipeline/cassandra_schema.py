@@ -62,6 +62,41 @@ def ensure_schema(host: str = "localhost", port: int = 9042, keyspace: str = "fr
         )
         session.execute(
             """
+            CREATE TABLE IF NOT EXISTS model_predictions_by_day (
+              day_bucket date,
+              event_ts timestamp,
+              event_id text,
+              account_id text,
+              name_dest text,
+              txn_type text,
+              amount double,
+              risk_score double,
+              severity text,
+              ml_score double,
+              ml_model_version text,
+              triggered_rules list<text>,
+              is_alert boolean,
+              alert_id text,
+              actual_label text,
+              PRIMARY KEY ((day_bucket), event_ts, event_id)
+            ) WITH CLUSTERING ORDER BY (event_ts DESC)
+            """
+        )
+        session.execute(
+            """
+            CREATE TABLE IF NOT EXISTS alert_reviews (
+              alert_id text PRIMARY KEY,
+              event_id text,
+              review_status text,
+              review_label text,
+              reviewer text,
+              notes text,
+              reviewed_at timestamp
+            )
+            """
+        )
+        session.execute(
+            """
             CREATE TABLE IF NOT EXISTS metrics_by_window (
               window_type text,
               window_bucket date,

@@ -1,7 +1,7 @@
 from .config import PipelineConfig
 from .benchmark import BenchmarkProfile, BenchmarkResult, DEFAULT_PROFILES, run_benchmark, run_benchmark_suite
 from .integration import IntegrationError, integrated_payload_to_transaction_event, integrate_logical_streams
-from .models import AccountStateUpdate, FraudDecision, TransactionEvent, WindowMetric
+from .models import AccountStateUpdate, FraudDecision, PredictionRecord, TransactionEvent, WindowMetric
 from .parsing import derive_account_state_updates, iter_transaction_events, parse_csv_row
 from .source_csv import (
     RECEIVER_STATE_SOURCE_FILENAME,
@@ -19,6 +19,8 @@ from .rules import RuleEngine
 from .serialization import (
     account_state_to_dict,
     fraud_decision_to_dict,
+    prediction_record_from_decision,
+    prediction_record_to_dict,
     receiver_state_to_dict,
     risk_rule_event,
     sender_state_to_dict,
@@ -49,6 +51,7 @@ __all__ = [
     "FRAUD_ALERTS_TOPIC",
     "FraudDecision",
     "IntegrationError",
+    "PredictionRecord",
     "METRICS_WINDOWED_TOPIC",
     "PIPELINE_DEAD_LETTER_TOPIC",
     "PipelineConfig",
@@ -78,6 +81,8 @@ __all__ = [
     "iter_transaction_source_payloads",
     "logical_source_paths",
     "parse_csv_row",
+    "prediction_record_from_decision",
+    "prediction_record_to_dict",
     "receiver_state_to_dict",
     "risk_rule_event",
     "run_benchmark",
