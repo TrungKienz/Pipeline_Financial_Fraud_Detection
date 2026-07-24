@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -92,8 +93,6 @@ def fraud_decision_to_dict(event: TransactionEvent, decision: FraudDecision) -> 
         "risk_score": decision.risk_score,
         "severity": decision.severity,
         "ml_score": decision.ml_score,
-        "rule_score": decision.rule_score,
-        "decision_threshold": decision.decision_threshold,
         "ml_model_version": decision.ml_model_version,
         "triggered_rules": list(decision.triggered_rules),
         "is_alert": decision.is_alert,

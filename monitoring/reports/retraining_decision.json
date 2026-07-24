@@ -1,0 +1,60 @@
+{
+  "generated_at": "2026-07-22T14:08:36.943932+00:00",
+  "retrain_required": true,
+  "reason_count": 4,
+  "reasons": [
+    {
+      "type": "drift_ratio",
+      "message": "Too many monitored features are drifting.",
+      "observed": 1.0,
+      "threshold": 0.3
+    },
+    {
+      "type": "amount_drift",
+      "message": "Amount distribution drift exceeds threshold.",
+      "observed": 0.469286,
+      "threshold": 0.2
+    },
+    {
+      "type": "alert_rate_change",
+      "message": "Alert rate changed significantly from the reference baseline.",
+      "observed": 0.166829,
+      "threshold": 0.1
+    },
+    {
+      "type": "label_coverage",
+      "message": "Label coverage is too low to trust recent monitoring fully.",
+      "observed": 0.0,
+      "threshold": 0.5
+    }
+  ],
+  "warnings": [
+    "No labeled predictions available yet. Precision/recall cannot represent production quality.",
+    "7-day labeled sample is only 0, below the minimum 25; performance triggers were evaluated conservatively."
+  ],
+  "policy_snapshot": {
+    "psi_amount_threshold": 0.2,
+    "amount_ks_stat_threshold": 0.2,
+    "feature_drift_ratio_threshold": 0.3,
+    "precision_7d_min": 0.8,
+    "recall_7d_min": 0.7,
+    "f1_7d_min": 0.75,
+    "label_coverage_min": 0.5,
+    "alert_rate_change_threshold": 0.1,
+    "minimum_labeled_rows_7d": 25,
+    "require_minimum_sample_for_trigger": true
+  },
+  "observations": {
+    "drifted_feature_count": 6,
+    "monitored_feature_count": 6,
+    "drift_ratio": 1.0,
+    "reference_alert_rate": 0.5954,
+    "serving_alert_rate": 0.428571,
+    "alert_rate_delta": 0.166829,
+    "label_coverage": 0.0,
+    "rolling_7d_labeled_rows": 0,
+    "rolling_7d_precision": null,
+    "rolling_7d_recall": null,
+    "rolling_7d_f1": null
+  }
+}

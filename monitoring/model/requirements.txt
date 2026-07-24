@@ -1,0 +1,5 @@
+evidently>=0.4.38
+pandas>=2.0.0
+numpy==1.24.4
+cassandra-driver
+scipy>=1.10.0

@@ -1,0 +1,58 @@
+{
+  "ok": false,
+  "cases": [
+    {
+      "case": "clean_integration",
+      "ok": false,
+      "expected_dead_letter_error": null,
+      "expected_dead_letter_source_key": null,
+      "expected_cassandra_event_id": "validation-clean-210afcf4dc",
+      "detail": "khong tim thay transaction trong Cassandra hoac phat hien dead-letter bat thuong"
+    },
+    {
+      "case": "missing_sender_state",
+      "ok": false,
+      "expected_dead_letter_error": "missing_sender_state",
+      "expected_dead_letter_source_key": "validation-missing-sender-210afcf4dc",
+      "expected_cassandra_event_id": null,
+      "detail": "chua nhan dead-letter missing_sender_state"
+    },
+    {
+      "case": "missing_receiver_state",
+      "ok": false,
+      "expected_dead_letter_error": "missing_receiver_state",
+      "expected_dead_letter_source_key": "validation-missing-receiver-210afcf4dc",
+      "expected_cassandra_event_id": null,
+      "detail": "chua nhan dead-letter missing_receiver_state"
+    },
+    {
+      "case": "semantic_mismatch",
+      "ok": false,
+      "expected_dead_letter_error": "semantic_key_mismatch",
+      "expected_dead_letter_source_key": "validation-mismatch-210afcf4dc",
+      "expected_cassandra_event_id": null,
+      "detail": "chua nhan dead-letter semantic_key_mismatch"
+    },
+    {
+      "case": "orphan_sender_state",
+      "ok": false,
+      "expected_dead_letter_error": "orphan_sender_state",
+      "expected_dead_letter_source_key": "validation-orphan-sender-210afcf4dc:sender",
+      "expected_cassandra_event_id": null,
+      "detail": "chua nhan dead-letter orphan_sender_state"
+    },
+    {
+      "case": "orphan_receiver_state",
+      "ok": false,
+      "expected_dead_letter_error": "orphan_receiver_state",
+      "expected_dead_letter_source_key": "validation-orphan-receiver-210afcf4dc:receiver",
+      "expected_cassandra_event_id": null,
+      "detail": "chua nhan dead-letter orphan_receiver_state"
+    }
+  ],
+  "observed_dead_letters": [],
+  "clean_case_persisted_to_cassandra": false,
+  "run_suffix": "210afcf4dc",
+  "bootstrap_servers": "localhost:9092",
+  "cassandra": "localhost:9042/fraud_detection"
+}

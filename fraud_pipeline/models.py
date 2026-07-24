@@ -60,6 +60,23 @@ class FraudDecision:
 
 
 @dataclass(frozen=True)
+class PredictionRecord:
+    event_id: str
+    account_id: str
+    name_dest: str
+    event_time: datetime
+    txn_type: str
+    amount: float
+    risk_score: float
+    severity: str
+    ml_score: float
+    ml_model_version: str
+    triggered_rules: tuple[str, ...] = field(default_factory=tuple)
+    is_alert: bool = False
+    alert_id: str | None = None
+
+
+@dataclass(frozen=True)
 class WindowMetric:
     window_start: datetime
     window_end: datetime

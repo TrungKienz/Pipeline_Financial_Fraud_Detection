@@ -162,14 +162,25 @@ Hệ thống được module hóa để dễ dàng bảo trì và mở rộng:
 - `stream_job.py`: Script chính điều khiển toàn bộ Pipeline. Thiết lập các truy vấn streaming, định nghĩa Watermarks và kết nối các Sinks.
 - `Dockerfile`: Đóng gói môi trường Spark, Python và các Driver cần thiết (Kafka, Cassandra, Redis).
 
+### 4.2.1. `api` (Model Serving)
+- `app.py`: FastAPI scoring service với các endpoint `GET /health`, `POST /score`, `POST /score/batch`.
+- `service.py`: Chuyển request sang `TransactionEvent`, dùng lại `RuleEngine` và shared prediction contract.
+- `Dockerfile`: Đóng gói API inference để chạy local hoặc deploy cloud free tier.
+
 ### 4.3. `dashboard` (Hiển thị)
-- `app.py`: Ứng dụng Streamlit sử dụng phong cách **Glassmorphism**. Nó truy vấn trực tiếp Cassandra/Redis để hiển thị các "điểm nóng" gian lận với hiệu ứng màu sắc (Đỏ: Nguy hiểm, Cam: Cảnh báo).
+- `app.py`: Ứng dụng Streamlit sử dụng phong cách **Glassmorphism**. Ngoài live alerts, app hiện có thêm **Review Queue**, **Case Details**, và **Monitoring Dashboard** cho drift/performance/retraining.
 
 ### 4.4. `scripts` (Tiện ích & Vận hành)
 - `bootstrap_local_stack.py`: Tự động hóa việc tạo Table, nạp Rule ban đầu.
 - `publish_logical_sources_parallel.py`: Producer hiệu năng cao, chạy đa luồng để bơm dữ liệu vào Kafka.
 
-### 4.5. Sơ đồ hạ tầng Docker (Deployment)
+### 4.5. `monitoring` (Model Monitoring)
+- `monitoring/model/reference_builder.py`: Tạo baseline reference từ dữ liệu model hiện có.
+- `monitoring/model/drift_report.py`: Sinh drift report JSON/HTML từ serving data.
+- `monitoring/model/performance_report.py`: Tính rolling precision/recall/F1 từ predictions và analyst reviews.
+- `monitoring/model/check_retraining_trigger.py`: Đánh giá có cần retrain theo policy hay không.
+
+### 4.6. Sơ đồ hạ tầng Docker (Deployment)
 
 ```mermaid
 graph LR
@@ -210,6 +221,22 @@ python scripts/bootstrap_local_stack.py
 ### Bước 4: Chạy Dashboard & Xem kết quả
 - Mở trình duyệt vào `http://localhost:8501` (Dashboard Streamlit).
 - Chạy script bơm dữ liệu: `python scripts/publish_logical_sources_parallel.py --rate 10`.
+
+### Bước 5: Gọi API scoring
+- API local: `http://localhost:8000`
+- Health check: `http://localhost:8000/health`
+- Score endpoint: `POST http://localhost:8000/score`
+
+### Bước 6: Chạy model monitoring scripts
+```powershell
+python monitoring/model/reference_builder.py --max-rows 5000
+python monitoring/model/drift_report.py --cassandra-host localhost --cassandra-port 9042 --cassandra-keyspace fraud_detection
+python monitoring/model/performance_report.py --cassandra-host localhost --cassandra-port 9042 --cassandra-keyspace fraud_detection
+python monitoring/model/check_retraining_trigger.py
+```
+
+> [!TIP]
+> Xem runbook chi tiết tại `docs/MODEL_DEPLOYMENT.md`.
 
 ---
 
@@ -270,6 +297,8 @@ Phần này giúp giám khảo đối chiếu nhanh các tính năng của hệ 
 | **Exactly-once Semantics** | **Idempotent Sinks** | Sử dụng Checkpointing kết hợp với bảng `processed_stream_batches` trong Cassandra để chặn trùng lặp. |
 | **Real-time Cleaning** | **DLQ Pattern** | Module `decode_json_stream` tự động tách dữ liệu lỗi ra khỏi luồng chính. |
 | **Benchmarking** | **Prometheus/Grafana** | Theo dõi EPS, Batch Duration và CPU/RAM real-time. |
+| **Model Serving** | **FastAPI** | Scoring giao dịch real-time qua HTTP API. |
+| **Model Monitoring** | **Monitoring Scripts + Streamlit** | Theo dõi drift, rolling performance và retraining trigger. |
 
 ### 10.2. Đối chiếu Tiêu chí Chấm điểm (Grading Rubric)
 - **System Design (20%):** Thể hiện qua sơ đồ Mindmap (Chương 1) và Kiến trúc đa tầng (Chương 2). 
