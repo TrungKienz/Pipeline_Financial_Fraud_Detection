@@ -569,6 +569,56 @@ def _scan_parquet_manifest(
     return frame, monotonic
 
 
+def _scan_csv_manifest(
+    data_path: Path,
+    batch_size: int,
+) -> tuple[pd.DataFrame, bool]:
+    schema_names = set(pd.read_csv(data_path, nrows=0).columns)
+    missing = sorted(set(REQUIRED_CLEANED_COLUMNS).difference(schema_names))
+    if missing:
+        raise ValueError(
+            "Cleaned transaction dataset is missing required columns: "
+            + ", ".join(missing)
+        )
+    has_row_id = "row_id" in schema_names
+    columns = ["step"] + (["row_id"] if has_row_id else [])
+    chunks: list[pd.DataFrame] = []
+    offset = 0
+    monotonic = True
+    previous_step: int | None = None
+    for current in pd.read_csv(
+        data_path,
+        usecols=columns,
+        chunksize=batch_size,
+        low_memory=False,
+    ):
+        current["step"] = pd.to_numeric(current["step"], errors="raise").astype(
+            np.int64
+        )
+        if has_row_id:
+            current["row_id"] = pd.to_numeric(
+                current["row_id"], errors="raise"
+            ).astype(np.int64)
+        else:
+            current["row_id"] = np.arange(
+                offset, offset + len(current), dtype=np.int64
+            )
+        if len(current):
+            values = current["step"].to_numpy(dtype=np.int64, copy=False)
+            monotonic = monotonic and bool(np.all(values[1:] >= values[:-1]))
+            if previous_step is not None and int(values[0]) < previous_step:
+                monotonic = False
+            previous_step = int(values[-1])
+        chunks.append(current[["row_id", "step"]])
+        offset += len(current)
+    if not chunks:
+        raise ValueError("Cleaned transaction dataset contains no rows")
+    frame = pd.concat(chunks, ignore_index=True)
+    if frame["row_id"].duplicated().any():
+        raise ValueError("row_id must be unique in transactions_cleaned.csv")
+    return frame, monotonic
+
+
 def _deterministic_parquet_sample(
     parquet_path: Path,
     columns: list[str],
@@ -723,7 +773,7 @@ def _verify_streaming_feature_exclusions(
     return verified_selected, report
 
 
-def _prepare_parquet_streaming(
+def _prepare_streaming(
     data_path: Path,
     artifacts: Path,
     *,
@@ -736,10 +786,31 @@ def _prepare_parquet_streaming(
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    manifest_source, monotonic = _scan_parquet_manifest(data_path, chunk_size)
+    source_format = data_path.suffix.lower().lstrip(".")
+    if source_format in {"parquet", "pq"}:
+        manifest_source, monotonic = _scan_parquet_manifest(data_path, chunk_size)
+        parquet = pq.ParquetFile(data_path)
+        has_row_id = "row_id" in parquet.schema_arrow.names
+        source_batches = (
+            batch.to_pandas()
+            for batch in parquet.iter_batches(batch_size=chunk_size)
+        )
+    elif source_format == "csv":
+        manifest_source, monotonic = _scan_csv_manifest(data_path, chunk_size)
+        has_row_id = "row_id" in pd.read_csv(data_path, nrows=0).columns
+        source_batches = pd.read_csv(
+            data_path,
+            chunksize=chunk_size,
+            low_memory=False,
+        )
+    else:
+        raise ValueError(
+            f"Unsupported cleaned dataset format {data_path.suffix!r}; "
+            "use Parquet or CSV"
+        )
     if not monotonic:
         raise ValueError(
-            "Streaming feature preparation requires transactions_cleaned.parquet "
+            "Streaming feature preparation requires the cleaned dataset "
             "to be sorted by step. Use --in-memory for an unsorted compatibility input."
         )
     manifest_path = artifacts / "split_manifest.parquet"
@@ -756,8 +827,6 @@ def _prepare_parquet_streaming(
     split_counts = manifest["split"].value_counts().to_dict()
     split_version = _manifest_fingerprint(manifest)
 
-    parquet = pq.ParquetFile(data_path)
-    has_row_id = "row_id" in parquet.schema_arrow.names
     state = DynamicFeatureState(PipelineConfig())
     engine = RuleEngine(state.config)
     writers: dict[str, pq.ParquetWriter] = {}
@@ -813,8 +882,7 @@ def _prepare_parquet_streaming(
 
     offset = 0
     try:
-        for batch in parquet.iter_batches(batch_size=chunk_size):
-            current = batch.to_pandas()
+        for current in source_batches:
             if has_row_id:
                 current["row_id"] = pd.to_numeric(
                     current["row_id"], errors="raise"
@@ -890,7 +958,7 @@ def _prepare_parquet_streaming(
     )
     metadata = {
         "source_path": str(data_path.resolve()),
-        "source_format": "parquet",
+        "source_format": source_format,
         "dataset_version": fingerprint.hexdigest(),
         "split_manifest_version": split_version,
         "row_count": row_count,
@@ -948,12 +1016,12 @@ def prepare_feature_artifacts(
     if chunk_size <= 0 or feature_selection_sample_rows <= 0:
         raise ValueError("chunk_size and feature_selection_sample_rows must be positive")
     if (
-        path.suffix.lower() in {".parquet", ".pq"}
+        path.suffix.lower() in {".parquet", ".pq", ".csv"}
         and limit is None
         and sample_size is None
         and not in_memory
     ):
-        return _prepare_parquet_streaming(
+        return _prepare_streaming(
             path,
             artifacts,
             feature_configuration=feature_configuration,
@@ -1098,7 +1166,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--data-path",
         default=str(DEFAULT_DATA_PATH),
-        help="Path to transactions_cleaned.parquet (CSV is supported for compatibility)",
+        help="Path to transactions_cleaned Parquet or CSV",
     )
     parser.add_argument(
         "--artifacts-dir", default=str(DEFAULT_ARTIFACTS_DIR), help="Artifact output directory"
@@ -1117,7 +1185,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--in-memory",
         action="store_true",
-        help="Compatibility mode for unsorted/small input; full Parquet defaults to streaming",
+        help="Compatibility mode for unsorted/small input; full inputs default to streaming",
     )
     return parser
 

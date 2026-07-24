@@ -170,6 +170,22 @@ class SplitManifestTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "binary 0/1"):
                 prepare_feature_artifacts(path, Path(temp_dir) / "artifacts")
 
+    def test_full_csv_uses_complete_step_streaming(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "transactions_cleaned.csv"
+            cleaned_frame().to_csv(path, index=False)
+            artifacts = Path(temp_dir) / "artifacts"
+
+            result = prepare_feature_artifacts(path, artifacts, chunk_size=3)
+
+            self.assertEqual(result["metadata"]["source_format"], "csv")
+            self.assertEqual(
+                result["metadata"]["preparation_mode"],
+                "streaming_complete_step_batches",
+            )
+            manifest = pd.read_parquet(artifacts / "split_manifest.parquet")
+            self.assertEqual(int(manifest.groupby("step")["split"].nunique().max()), 1)
+
 
 class FeatureSemanticsTests(unittest.TestCase):
     def test_same_step_events_do_not_see_each_other(self) -> None:

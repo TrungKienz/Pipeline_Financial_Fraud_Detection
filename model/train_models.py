@@ -604,6 +604,7 @@ def run_ablation(
     false_alarm_unit_cost: float,
     random_state: int,
     max_train_rows: int | None,
+    model_type: str = "logreg",
 ) -> pd.DataFrame:
     sampled_train = _sample_training_rows(train, max_train_rows, random_state)
     rows: list[dict[str, Any]] = []
@@ -632,6 +633,7 @@ def run_ablation(
                 validation,
                 false_alarm_unit_cost=false_alarm_unit_cost,
                 random_state=random_state,
+                model_type=model_type,
             )
         )
     return pd.DataFrame(rows)
@@ -645,14 +647,26 @@ def _evaluate_ablation_set(
     *,
     false_alarm_unit_cost: float,
     random_state: int,
+    model_type: str = "logreg",
 ) -> dict[str, Any]:
-    preprocessor = build_preprocessor(features, scale_numeric=True)
-    estimator = LogisticRegression(
-        max_iter=300,
-        class_weight="balanced",
-        solver="saga",
-        random_state=random_state,
+    preprocessor = build_preprocessor(
+        features,
+        scale_numeric=model_type == "logreg",
     )
+    if model_type == "logreg":
+        estimator = LogisticRegression(
+            max_iter=300,
+            class_weight="balanced",
+            solver="saga",
+            random_state=random_state,
+        )
+    else:
+        estimator, _ = build_estimator(
+            model_type,
+            train["label"].to_numpy(dtype=np.int8),
+            random_state=random_state,
+            quick=False,
+        )
     started = time.perf_counter()
     transformed_train = preprocessor.fit_transform(train[list(features)])
     estimator.fit(transformed_train, train["label"].to_numpy(dtype=np.int8))
@@ -678,6 +692,7 @@ def _evaluate_ablation_set(
     )
     return {
         "feature_set": feature_set,
+        "model_tag": model_type,
         "feature_count": len(features),
         "status": "completed",
         "validation_average_precision": metrics["average_precision"],
@@ -730,6 +745,7 @@ def run_ablation_from_artifacts(
     false_alarm_unit_cost: float,
     random_state: int,
     max_train_rows: int,
+    model_type: str = "logreg",
 ) -> pd.DataFrame:
     metadata_columns = ["row_id", "label", "amount", "rule_score"]
     train_columns = list(dict.fromkeys([*metadata_columns, *FULL_PAYSIM_FEATURES]))
@@ -771,6 +787,7 @@ def run_ablation_from_artifacts(
                 validation,
                 false_alarm_unit_cost=false_alarm_unit_cost,
                 random_state=random_state,
+                model_type=model_type,
             )
         )
         del validation
@@ -864,6 +881,7 @@ def train_and_export_models(
     false_alarm_unit_cost: float = 5.0,
     random_state: int = 42,
     quick: bool = False,
+    run_sensitivity_analysis: bool = True,
     run_feature_ablation: bool = True,
     ablation_max_rows: int | None = 500_000,
     update_runtime_pointer: bool = True,
@@ -893,6 +911,7 @@ def train_and_export_models(
     candidate_paths: dict[str, Path] = {}
     try:
         for model_type in requested:
+            print(f"Training candidate model: {model_type}", flush=True)
             bundle, comparison = _candidate_bundle(
                 model_type,
                 train,
@@ -906,7 +925,13 @@ def train_and_export_models(
             joblib.dump(bundle, candidate_path)
             candidate_paths[model_type] = candidate_path
             comparisons.append(comparison)
+            print(
+                f"Completed candidate model: {model_type} "
+                f"in {comparison['training_time']:.2f}s",
+                flush=True,
+            )
             del bundle
+            gc.collect()
 
         selected_comparison = min(comparisons, key=_selection_key)
         selected_tag = str(selected_comparison["model_tag"])
@@ -926,33 +951,34 @@ def train_and_export_models(
         DEFAULT_ML_WEIGHT,
     )
 
-    sensitivity_rows: list[dict[str, Any]] = []
-    for unit_cost in FALSE_ALARM_SENSITIVITY_COSTS:
-        for system, scores in (
-            ("rule_only", validation_rule_scores),
-            ("ml_only", validation_ml_scores),
-            ("hybrid", validation_hybrid_scores),
-        ):
-            tuned = tune_threshold_by_business_cost(
-                validation_labels,
-                scores,
-                validation_amounts,
-                unit_cost,
-            )
-            sensitivity_rows.append(
-                {
-                    "system": system,
-                    "false_alarm_unit_cost": unit_cost,
-                    "validation_threshold": tuned["threshold"],
-                    "validation_business_cost": tuned["business_cost"],
-                    "validation_missed_fraud_cost": tuned["missed_fraud_cost"],
-                    "validation_false_alarm_cost": tuned["false_alarm_cost"],
-                    "validation_savings_rate": tuned["savings_rate"],
-                }
-            )
-    pd.DataFrame(sensitivity_rows).to_csv(
-        artifacts / "sensitivity_analysis.csv", index=False
-    )
+    if run_sensitivity_analysis:
+        sensitivity_rows: list[dict[str, Any]] = []
+        for unit_cost in FALSE_ALARM_SENSITIVITY_COSTS:
+            for system, scores in (
+                ("rule_only", validation_rule_scores),
+                ("ml_only", validation_ml_scores),
+                ("hybrid", validation_hybrid_scores),
+            ):
+                tuned = tune_threshold_by_business_cost(
+                    validation_labels,
+                    scores,
+                    validation_amounts,
+                    unit_cost,
+                )
+                sensitivity_rows.append(
+                    {
+                        "system": system,
+                        "false_alarm_unit_cost": unit_cost,
+                        "validation_threshold": tuned["threshold"],
+                        "validation_business_cost": tuned["business_cost"],
+                        "validation_missed_fraud_cost": tuned["missed_fraud_cost"],
+                        "validation_false_alarm_cost": tuned["false_alarm_cost"],
+                        "validation_savings_rate": tuned["savings_rate"],
+                    }
+                )
+        pd.DataFrame(sensitivity_rows).to_csv(
+            artifacts / "sensitivity_analysis.csv", index=False
+        )
 
     del (
         frames,
@@ -1214,6 +1240,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--false-alarm-cost", type=float, default=5.0)
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--quick", action="store_true")
+    parser.add_argument("--skip-sensitivity", action="store_true")
     parser.add_argument("--skip-ablation", action="store_true")
     parser.add_argument("--ablation-max-rows", type=int, default=500_000)
     parser.add_argument("--no-update-runtime-pointer", action="store_true")
@@ -1229,6 +1256,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         false_alarm_unit_cost=args.false_alarm_cost,
         random_state=args.random_state,
         quick=args.quick,
+        run_sensitivity_analysis=not args.skip_sensitivity,
         run_feature_ablation=not args.skip_ablation,
         ablation_max_rows=args.ablation_max_rows,
         update_runtime_pointer=not args.no_update_runtime_pointer,
