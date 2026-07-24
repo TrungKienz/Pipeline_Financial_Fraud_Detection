@@ -188,6 +188,8 @@ def build_transaction_event_from_request(payload: ScoreRequest) -> TransactionEv
     producer_ts = payload.producer_ts or event_time
     newbalance_orig = payload.newbalance_orig if payload.newbalance_orig is not None else max(payload.oldbalance_org - payload.amount, 0.0)
     newbalance_dest = payload.newbalance_dest if payload.newbalance_dest is not None else payload.oldbalance_dest + payload.amount
+    hour_of_day = payload.step % 24
+    is_night_transaction = int(hour_of_day >= 22 or hour_of_day <= 6)
 
     row = {
         "step": str(payload.step),
@@ -215,6 +217,8 @@ def build_transaction_event_from_request(payload: ScoreRequest) -> TransactionEv
         newbalance_dest=newbalance_dest,
         is_fraud=payload.is_fraud,
         schema_version=payload.schema_version,
+        hour_of_day=hour_of_day,
+        is_night_transaction=is_night_transaction,
     )
 
 

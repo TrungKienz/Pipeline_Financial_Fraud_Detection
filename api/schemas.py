@@ -3,6 +3,11 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fraud_pipeline.config import PipelineConfig
+
+
+DEFAULT_SCHEMA_VERSION = PipelineConfig().schema_version
+
 
 class ScoreRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -20,7 +25,7 @@ class ScoreRequest(BaseModel):
     newbalance_orig: Optional[float] = Field(default=None, alias="newbalanceOrig")
     newbalance_dest: Optional[float] = Field(default=None, alias="newbalanceDest")
     is_fraud: int = Field(default=0, alias="isFraud", ge=0, le=1)
-    schema_version: int = Field(default=1, ge=1)
+    schema_version: int = Field(default=DEFAULT_SCHEMA_VERSION, ge=1)
 
 
 class ScoreResponse(BaseModel):
