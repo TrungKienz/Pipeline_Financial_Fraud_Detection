@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated, List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -11,25 +11,34 @@ class ScoreRequest(BaseModel):
     event_time: Optional[datetime] = Field(default=None, description="Optional event timestamp in ISO-8601")
     producer_ts: Optional[datetime] = Field(default=None, description="Optional producer timestamp in ISO-8601")
     step: int = Field(..., ge=0)
-    txn_type: Annotated[str, Field(alias="type", min_length=1)]
+    txn_type: str = Field(..., alias="type", min_length=1)
     amount: float = Field(..., ge=0)
-    name_orig: Annotated[str, Field(alias="nameOrig", min_length=1)]
-    oldbalance_org: Annotated[float, Field(alias="oldbalanceOrg")]
-    newbalance_orig: Annotated[float, Field(alias="newbalanceOrig")]
-    name_dest: Annotated[str, Field(alias="nameDest", min_length=1)]
-    oldbalance_dest: Annotated[float, Field(alias="oldbalanceDest")]
-    newbalance_dest: Annotated[float, Field(alias="newbalanceDest")]
-    is_fraud: Annotated[int, Field(alias="isFraud", ge=0, le=1)] = 0
+    name_orig: str = Field(..., alias="nameOrig", min_length=1)
+    oldbalance_org: float = Field(..., alias="oldbalanceOrg")
+    name_dest: str = Field(..., alias="nameDest", min_length=1)
+    oldbalance_dest: float = Field(..., alias="oldbalanceDest")
+    newbalance_orig: Optional[float] = Field(default=None, alias="newbalanceOrig")
+    newbalance_dest: Optional[float] = Field(default=None, alias="newbalanceDest")
+    is_fraud: int = Field(default=0, alias="isFraud", ge=0, le=1)
     schema_version: int = Field(default=1, ge=1)
 
 
 class ScoreResponse(BaseModel):
     event_id: str
     is_alert: bool
+    decision: str
     risk_score: float
-    severity: str
+    rule_score: float
     ml_score: float
+    hybrid_score: float
+    threshold: float
+    severity: str
     ml_model_version: str
+    model_version: str
+    model_tag: str
+    feature_configuration: str
+    rule_weight: float
+    ml_weight: float
     triggered_rules: List[str]
 
 
@@ -39,6 +48,20 @@ class HealthResponse(BaseModel):
     model_version: str
     model_type: str
     prediction_logging_enabled: bool
+
+
+class ModelInfoResponse(BaseModel):
+    artifact_path: str
+    model_loaded: bool
+    model_version: str
+    model_tag: str
+    feature_configuration: str
+    feature_count: int
+    hybrid_threshold: float
+    rule_weight: float
+    ml_weight: float
+    feature_columns: Optional[List[str]] = None
+    ml_threshold: Optional[float] = None
 
 
 class BatchScoreRequest(BaseModel):

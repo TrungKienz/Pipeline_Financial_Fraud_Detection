@@ -31,9 +31,15 @@ class ParsingTests(unittest.TestCase):
         self.assertTrue(event.event_id)
         self.assertTrue(event.event_time.isoformat().startswith("2026-01-01T00:01:00"))
 
-    def test_parse_csv_row_event_id_changes_when_balances_change(self) -> None:
+    def test_parse_csv_row_event_id_ignores_post_transaction_balances(self) -> None:
         first = parse_csv_row(sample_row())
-        second = parse_csv_row(sample_row(newbalanceDest="5.0"))
+        second = parse_csv_row(sample_row(newbalanceDest="5.0", newbalanceOrig="5.0"))
+
+        self.assertEqual(first.event_id, second.event_id)
+
+    def test_parse_csv_row_event_id_changes_when_inference_balance_changes(self) -> None:
+        first = parse_csv_row(sample_row())
+        second = parse_csv_row(sample_row(oldbalanceDest="5.0"))
 
         self.assertNotEqual(first.event_id, second.event_id)
 

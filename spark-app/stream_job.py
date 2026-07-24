@@ -103,7 +103,7 @@ def transaction_schema() -> StructType:
             StructField("ip_billing_country_mismatch", IntegerType(), True),
             StructField("shipping_billing_mismatch", IntegerType(), True),
             StructField("failed_payment_attempts_24h", DoubleType(), True),
-            StructField("isFraud", IntegerType(), False),
+            StructField("isFraud", IntegerType(), True),
             StructField("schema_version", IntegerType(), False),
         ]
     )
@@ -118,7 +118,7 @@ def sender_state_schema() -> StructType:
             StructField("step", IntegerType(), False),
             StructField("nameOrig", StringType(), False),
             StructField("oldbalanceOrg", DoubleType(), False),
-            StructField("newbalanceOrig", DoubleType(), False),
+            StructField("newbalanceOrig", DoubleType(), True),
         ]
     )
 
@@ -132,7 +132,7 @@ def receiver_state_schema() -> StructType:
             StructField("step", IntegerType(), False),
             StructField("nameDest", StringType(), False),
             StructField("oldbalanceDest", DoubleType(), False),
-            StructField("newbalanceDest", DoubleType(), False),
+            StructField("newbalanceDest", DoubleType(), True),
         ]
     )
 
@@ -460,9 +460,7 @@ def build_integrated_stream(
             F.col("tx_shipping_billing_mismatch").alias("shipping_billing_mismatch"),
             F.col("tx_failed_payment_attempts_24h").alias("failed_payment_attempts_24h"),
             "oldbalanceOrg",
-            "newbalanceOrig",
             "oldbalanceDest",
-            "newbalanceDest",
             F.col("tx_is_fraud").alias("isFraud"),
             F.col("tx_schema_version").alias("schema_version"),
         )
@@ -619,17 +617,20 @@ def get_prepared_statements() -> dict[str, Any]:
             """
             INSERT INTO model_predictions_by_day (
               day_bucket, event_ts, event_id, account_id, name_dest, txn_type, amount,
-              risk_score, severity, ml_score, ml_model_version, triggered_rules,
-              is_alert, alert_id, actual_label
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              risk_score, rule_score, ml_score, hybrid_score, threshold, decision,
+              severity, ml_model_version, model_tag, feature_configuration,
+              rule_weight, ml_weight, triggered_rules, is_alert, alert_id, actual_label
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
         ),
         "insert_alert": session.prepare(
             """
             INSERT INTO alerts_by_account (
               account_id, alert_date, alert_ts, alert_id, event_id, name_dest, txn_type,
-              amount, risk_score, severity, ml_score, ml_model_version, triggered_rules
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              amount, risk_score, rule_score, ml_score, hybrid_score, threshold, decision,
+              severity, ml_model_version, model_tag, feature_configuration,
+              rule_weight, ml_weight, triggered_rules
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
         ),
         "insert_account_state": session.prepare(
@@ -1126,9 +1127,17 @@ def persist_prediction(prediction: PredictionRecord) -> None:
             prediction.txn_type,
             prediction.amount,
             prediction.risk_score,
-            prediction.severity,
+            prediction.rule_score,
             prediction.ml_score,
+            prediction.hybrid_score,
+            prediction.decision_threshold,
+            "alert" if prediction.is_alert else "allow",
+            prediction.severity,
             prediction.ml_model_version,
+            prediction.model_tag,
+            prediction.feature_configuration,
+            prediction.rule_weight,
+            prediction.ml_weight,
             list(prediction.triggered_rules),
             prediction.is_alert,
             prediction.alert_id,
@@ -1151,9 +1160,17 @@ def persist_alert(event: TransactionEvent, alert_payload: dict[str, Any]) -> Non
             event.txn_type,
             event.amount,
             alert_payload["risk_score"],
-            alert_payload["severity"],
+            alert_payload["rule_score"],
             alert_payload["ml_score"],
+            alert_payload["hybrid_score"],
+            alert_payload["threshold"],
+            alert_payload["decision"],
+            alert_payload["severity"],
             alert_payload["ml_model_version"],
+            alert_payload["model_tag"],
+            alert_payload["feature_configuration"],
+            alert_payload["rule_weight"],
+            alert_payload["ml_weight"],
             alert_payload["triggered_rules"],
         ),
     )
@@ -1501,7 +1518,6 @@ def main() -> None:
             "ip_billing_country_mismatch",
             "shipping_billing_mismatch",
             "failed_payment_attempts_24h",
-            "isFraud",
             "schema_version",
         ],
         timestamp_fields=["event_time", "producer_ts"],
@@ -1516,7 +1532,6 @@ def main() -> None:
             "step",
             "nameOrig",
             "oldbalanceOrg",
-            "newbalanceOrig",
         ],
         timestamp_fields=["event_time"],
     )
@@ -1530,7 +1545,6 @@ def main() -> None:
             "step",
             "nameDest",
             "oldbalanceDest",
-            "newbalanceDest",
         ],
         timestamp_fields=["event_time"],
     )
@@ -1574,3 +1588,8 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+
+

@@ -57,6 +57,10 @@ class FraudDecision:
     triggered_rules: tuple[str, ...] = field(default_factory=tuple)
     rule_score: float = 0.0
     decision_threshold: float = 0.5
+    model_tag: str = "unknown"
+    feature_configuration: str = "unknown"
+    rule_weight: float = 0.6
+    ml_weight: float = 0.4
 
 
 @dataclass(frozen=True)
@@ -69,8 +73,15 @@ class PredictionRecord:
     amount: float
     risk_score: float
     severity: str
+    rule_score: float
     ml_score: float
+    hybrid_score: float
+    decision_threshold: float
     ml_model_version: str
+    model_tag: str = "unknown"
+    feature_configuration: str = "unknown"
+    rule_weight: float = 0.6
+    ml_weight: float = 0.4
     triggered_rules: tuple[str, ...] = field(default_factory=tuple)
     is_alert: bool = False
     alert_id: str | None = None
@@ -84,4 +95,6 @@ class WindowMetric:
     fraud_count: int
     total_amount: float
     fraud_rate: float
+
+
 

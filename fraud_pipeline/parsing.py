@@ -28,9 +28,7 @@ def build_event_id(row: dict[str, str]) -> str:
             row["nameOrig"].strip(),
             row["nameDest"].strip(),
             row["oldbalanceOrg"].strip(),
-            row["newbalanceOrig"].strip(),
             row["oldbalanceDest"].strip(),
-            row["newbalanceDest"].strip(),
         ]
     )
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
@@ -42,11 +40,15 @@ def parse_csv_row(row: dict[str, str], config: PipelineConfig | None = None) -> 
         step = int(row["step"])
         amount = float(row["amount"])
         oldbalance_org = float(row["oldbalanceOrg"])
-        newbalance_orig = float(row["newbalanceOrig"])
         oldbalance_dest = float(row["oldbalanceDest"])
-        newbalance_dest = float(row["newbalanceDest"])
-        is_fraud = int(row["isFraud"])
         txn_type = row["type"].strip()
+        newbalance_orig = float(
+            _optional(row, "newbalanceOrig", str(max(oldbalance_org - amount, 0.0)))
+        )
+        newbalance_dest = float(
+            _optional(row, "newbalanceDest", str(oldbalance_dest + amount))
+        )
+        is_fraud = int(_optional(row, "isFraud", "0"))
         name_orig = row["nameOrig"].strip()
         name_dest = row["nameDest"].strip()
         hour = int(_optional(row, "hour_of_day", str(step % 24)))
@@ -140,3 +142,6 @@ def iter_transaction_events(
             if limit is not None and index >= limit:
                 break
             yield parse_csv_row(row, config=config)
+
+
+

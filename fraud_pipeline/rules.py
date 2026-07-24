@@ -151,18 +151,11 @@ class RuleEngine:
         rule_evaluation = self.evaluate_rules(event, context)
         dynamic_features = calculate_dynamic_features(event, context, self.config)
         runtime = _model_runtime()
-        ml_score, prediction_succeeded = self._predict_ml_score(
-            event, dynamic_features, runtime
-        )
-        scoring = (
-            runtime.get_scoring_config()
-            if runtime is not None
-            else {
-                "rule_weight": DEFAULT_RULE_WEIGHT,
-                "ml_weight": DEFAULT_ML_WEIGHT,
-                "hybrid_threshold": 0.5,
-            }
-        )
+        if runtime is None:
+            raise RuntimeError("ML runtime unavailable: model.model_utils could not be imported")
+        scoring = runtime.get_scoring_config(strict=True)
+        model_info = runtime.get_model_info(strict=True)
+        ml_score = self._predict_ml_score(event, dynamic_features, runtime)
         combined_risk_score = combine_risk_scores(
             rule_evaluation.score,
             ml_score,
@@ -170,16 +163,7 @@ class RuleEngine:
             float(scoring["ml_weight"]),
         )
         threshold = float(scoring["hybrid_threshold"])
-        loaded = bool(
-            runtime is not None
-            and runtime.model_is_loaded()
-            and prediction_succeeded
-        )
-        # Rule-only degradation remains available before a freshly trained artifact
-        # has been deployed; production decisions use the frozen hybrid threshold.
-        is_alert = combined_risk_score >= threshold if loaded else bool(
-            rule_evaluation.triggered_rules
-        )
+        is_alert = combined_risk_score >= threshold
         severity = (
             "high"
             if combined_risk_score >= 0.65
@@ -194,10 +178,14 @@ class RuleEngine:
             risk_score=combined_risk_score,
             severity=severity,
             ml_score=ml_score,
-            ml_model_version=runtime.get_model_version() if loaded else "v0",
+            ml_model_version=str(model_info["model_version"]),
             triggered_rules=rule_evaluation.triggered_rules,
             rule_score=rule_evaluation.score,
             decision_threshold=threshold,
+            model_tag=str(model_info["model_tag"]),
+            feature_configuration=str(model_info["feature_configuration"]),
+            rule_weight=float(scoring["rule_weight"]),
+            ml_weight=float(scoring["ml_weight"]),
         )
 
     def _predict_ml_score(
@@ -205,19 +193,13 @@ class RuleEngine:
         event: TransactionEvent,
         dynamic_features: dict[str, float] | None = None,
         runtime: Any | None = None,
-    ) -> tuple[float, bool]:
-        if runtime is None or not runtime.model_is_loaded():
-            return 0.0, False
-        try:
-            score = float(
-                runtime.predict_proba(event, dynamic_features=dynamic_features)
-            )
-            if not np.isfinite(score):
-                raise ValueError(f"Model returned a non-finite score: {score}")
-            return score, True
-        except Exception:
-            LOGGER.exception("ML prediction failed for event_id=%s", event.event_id)
-            return 0.0, False
+    ) -> float:
+        if runtime is None:
+            raise RuntimeError("ML runtime unavailable")
+        score = float(runtime.predict_proba(event, dynamic_features=dynamic_features))
+        if not np.isfinite(score):
+            raise ValueError(f"Model returned a non-finite score: {score}")
+        return score
 
     @staticmethod
     def _strict_prior(
@@ -371,3 +353,5 @@ class RuleEngine:
             and event.amount / inbound_total
             >= self.config.cashout_after_inbound_ratio_threshold
         )
+
+

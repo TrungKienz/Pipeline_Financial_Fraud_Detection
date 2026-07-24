@@ -4,8 +4,8 @@ USER root
 
 RUN python3 -m pip install --no-cache-dir \
     cassandra-driver redis kafka-python \
-    numpy==1.24.4 joblib==1.4.2 scikit-learn==1.3.2 \
-    pandas==2.0.3 xgboost==3.2.0 lightgbm==4.5.0
+    numpy==2.4.4 joblib==1.5.3 scikit-learn==1.8.0 \
+    pandas==3.0.3 xgboost==3.2.0 lightgbm==4.5.0
 
 WORKDIR /opt/project
 
@@ -19,3 +19,6 @@ RUN sed -i 's/\r$//' /opt/project/spark-app-build/entrypoint.sh \
     && chmod +x /opt/project/spark-app-build/entrypoint.sh
 
 CMD ["/opt/project/spark-app-build/entrypoint.sh"]
+
+
+

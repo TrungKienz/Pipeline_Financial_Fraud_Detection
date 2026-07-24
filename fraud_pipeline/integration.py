@@ -72,9 +72,9 @@ def integrate_logical_streams(
         "nameOrig": tx_name_orig,
         "nameDest": tx_name_dest,
         "oldbalanceOrg": float(_value(sender_payload, "oldbalanceOrg")),
-        "newbalanceOrig": float(_value(sender_payload, "newbalanceOrig")),
+        "newbalanceOrig": float(sender_payload.get("newbalanceOrig") if sender_payload.get("newbalanceOrig") is not None else max(float(_value(sender_payload, "oldbalanceOrg")) - float(_value(transaction_payload, "amount")), 0.0)),
         "oldbalanceDest": float(_value(receiver_payload, "oldbalanceDest")),
-        "newbalanceDest": float(_value(receiver_payload, "newbalanceDest")),
+        "newbalanceDest": float(receiver_payload.get("newbalanceDest") if receiver_payload.get("newbalanceDest") is not None else float(_value(receiver_payload, "oldbalanceDest")) + float(_value(transaction_payload, "amount"))),
         "hour_of_day": transaction_payload.get("hour_of_day"),
         "is_night_transaction": transaction_payload.get("is_night_transaction"),
         "customer_account_age_days": transaction_payload.get("customer_account_age_days", 0.0),
@@ -87,7 +87,7 @@ def integrate_logical_streams(
         "ip_billing_country_mismatch": transaction_payload.get("ip_billing_country_mismatch", 0),
         "shipping_billing_mismatch": transaction_payload.get("shipping_billing_mismatch", 0),
         "failed_payment_attempts_24h": transaction_payload.get("failed_payment_attempts_24h", 0.0),
-        "isFraud": int(_value(transaction_payload, "isFraud")),
+        "isFraud": int(transaction_payload.get("isFraud") or 0),
         "schema_version": int(transaction_payload.get("schema_version", 1)),
     }
 
@@ -102,11 +102,11 @@ def integrated_payload_to_transaction_event(payload: Mapping[str, Any]) -> Trans
         amount=float(_value(payload, "amount")),
         name_orig=str(_value(payload, "nameOrig")),
         oldbalance_org=float(_value(payload, "oldbalanceOrg")),
-        newbalance_orig=float(_value(payload, "newbalanceOrig")),
+        newbalance_orig=float(payload.get("newbalanceOrig") if payload.get("newbalanceOrig") is not None else max(float(_value(payload, "oldbalanceOrg")) - float(_value(payload, "amount")), 0.0)),
         name_dest=str(_value(payload, "nameDest")),
         oldbalance_dest=float(_value(payload, "oldbalanceDest")),
-        newbalance_dest=float(_value(payload, "newbalanceDest")),
-        is_fraud=int(_value(payload, "isFraud")),
+        newbalance_dest=float(payload.get("newbalanceDest") if payload.get("newbalanceDest") is not None else float(_value(payload, "oldbalanceDest")) + float(_value(payload, "amount"))),
+        is_fraud=int(payload.get("isFraud") or 0),
         schema_version=int(payload.get("schema_version", 1)),
         hour_of_day=(
             int(payload["hour_of_day"])
@@ -129,3 +129,4 @@ def integrated_payload_to_transaction_event(payload: Mapping[str, Any]) -> Trans
         shipping_billing_mismatch=int(payload.get("shipping_billing_mismatch") or 0),
         failed_payment_attempts_24h=float(payload.get("failed_payment_attempts_24h") or 0.0),
     )
+

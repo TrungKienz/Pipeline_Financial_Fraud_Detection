@@ -25,6 +25,12 @@ DEFAULT_ARTIFACT = MODEL_DIR / "artifacts" / "fraud_pipeline_selected.joblib"
 SELECTED_MODEL_POINTER = MODEL_DIR / "selected_model.json"
 LOGGER = logging.getLogger(__name__)
 MAX_THRESHOLD_SENTINEL = float(np.nextafter(1.0, np.inf))
+PRODUCTION_MODEL_TAG = "xgb"
+PRODUCTION_FEATURE_CONFIGURATION = "deployment_safe"
+PRODUCTION_FEATURE_COUNT = 24
+PRODUCTION_RULE_WEIGHT = 0.6
+PRODUCTION_ML_WEIGHT = 0.4
+PRODUCTION_HYBRID_THRESHOLD = 0.236128568649292
 REQUIRED_ARTIFACT_KEYS = frozenset(
     {
         "artifact_format_version",
@@ -76,7 +82,7 @@ def validate_model_artifact(artifact: Mapping[str, Any]) -> None:
     missing = sorted(REQUIRED_ARTIFACT_KEYS.difference(artifact))
     if missing:
         raise ValueError(f"Selected model artifact is missing keys: {missing}")
-    if artifact["feature_configuration"] != "deployment_safe":
+    if artifact["feature_configuration"] != PRODUCTION_FEATURE_CONFIGURATION:
         raise ValueError(
             "Runtime model artifact must use feature_configuration='deployment_safe'"
         )
@@ -134,12 +140,36 @@ def validate_model_artifact(artifact: Mapping[str, Any]) -> None:
             )
 
 
+def validate_production_model_artifact(artifact: Mapping[str, Any]) -> None:
+    validate_model_artifact(artifact)
+    if str(artifact["model_tag"]) != PRODUCTION_MODEL_TAG:
+        raise ValueError("Runtime model artifact must use production model_tag='xgb'")
+    features = [str(value) for value in artifact["feature_columns"]]
+    if len(features) != PRODUCTION_FEATURE_COUNT:
+        raise ValueError(
+            f"Production artifact must contain {PRODUCTION_FEATURE_COUNT} selected features, got {len(features)}"
+        )
+    rule_weight = float(artifact["rule_weight"])
+    ml_weight = float(artifact["ml_weight"])
+    if not np.isclose(rule_weight, PRODUCTION_RULE_WEIGHT) or not np.isclose(ml_weight, PRODUCTION_ML_WEIGHT):
+        raise ValueError(
+            f"Production hybrid weights must be rule={PRODUCTION_RULE_WEIGHT}, ml={PRODUCTION_ML_WEIGHT}; "
+            f"got rule={rule_weight}, ml={ml_weight}"
+        )
+    hybrid_threshold = float(artifact["hybrid_threshold"])
+    if not np.isclose(hybrid_threshold, PRODUCTION_HYBRID_THRESHOLD, rtol=0.0, atol=1e-15):
+        raise ValueError(
+            f"Production hybrid threshold must be {PRODUCTION_HYBRID_THRESHOLD}, got {hybrid_threshold}"
+        )
+
 def load_model_artifact(
     path: str | Path | None = None,
     *,
     strict: bool = False,
     force_reload: bool = False,
+    production: bool | None = None,
 ) -> dict[str, Any] | None:
+    enforce_production = path is None if production is None else production
     artifact_path = Path(path).resolve() if path is not None else _artifact_path()
     if (
         not force_reload
@@ -166,7 +196,10 @@ def load_model_artifact(
         loaded = joblib.load(artifact_path)
         if not isinstance(loaded, dict):
             raise ValueError("Selected model artifact must contain a dictionary bundle")
-        validate_model_artifact(loaded)
+        if enforce_production:
+            validate_production_model_artifact(loaded)
+        else:
+            validate_model_artifact(loaded)
     except Exception:
         if strict:
             raise
@@ -203,7 +236,7 @@ def refresh_model_artifact(*, strict: bool = False) -> dict[str, Any] | None:
         and _artifact_cache["mtime_ns"] == mtime_ns
     ):
         return _artifact_cache["artifact"]
-    return load_model_artifact(path, strict=strict, force_reload=True)
+    return load_model_artifact(path, strict=strict, force_reload=True, production=True)
 
 
 def predict_frame(artifact: Mapping[str, Any], frame: pd.DataFrame) -> np.ndarray:
@@ -253,9 +286,7 @@ def predict_proba(
     event: TransactionEvent,
     dynamic_features: Mapping[str, float] | None = None,
 ) -> float:
-    artifact = load_model_artifact()
-    if artifact is None:
-        return 0.0
+    artifact = load_model_artifact(strict=True)
     record = build_feature_record(event, dynamic_features=dynamic_features)
     score = predict_frame(artifact, pd.DataFrame([record]))[0]
     return float(score)
@@ -272,20 +303,26 @@ def get_model_version() -> str:
 
 def get_ml_threshold() -> float:
     artifact = load_model_artifact()
-    return float(artifact["ml_threshold"]) if artifact else 0.5
+    return float(artifact["ml_threshold"]) if artifact else PRODUCTION_HYBRID_THRESHOLD
 
 
 def get_threshold() -> float:
     """Compatibility API; deployed decisions use the hybrid threshold."""
 
     artifact = load_model_artifact()
-    return float(artifact["hybrid_threshold"]) if artifact else 0.5
+    return float(artifact["hybrid_threshold"]) if artifact else PRODUCTION_HYBRID_THRESHOLD
 
 
-def get_scoring_config() -> dict[str, float]:
-    artifact = load_model_artifact()
+def get_scoring_config(*, strict: bool = False) -> dict[str, float]:
+    artifact = load_model_artifact(strict=strict)
     if artifact is None:
-        return {"rule_weight": 0.6, "ml_weight": 0.4, "hybrid_threshold": 0.5}
+        if strict:
+            raise RuntimeError("Selected fraud model artifact is not loaded")
+        return {
+            "rule_weight": PRODUCTION_RULE_WEIGHT,
+            "ml_weight": PRODUCTION_ML_WEIGHT,
+            "hybrid_threshold": PRODUCTION_HYBRID_THRESHOLD,
+        }
     return {
         "rule_weight": float(artifact["rule_weight"]),
         "ml_weight": float(artifact["ml_weight"]),
@@ -300,3 +337,37 @@ def get_rule_config() -> dict[str, float | int] | None:
     return {
         str(name): value for name, value in dict(artifact["rule_config"]).items()
     }
+
+
+def get_model_info(*, strict: bool = False) -> dict[str, Any]:
+    path = _artifact_path()
+    artifact = load_model_artifact(path, strict=strict, production=True)
+    if artifact is None:
+        return {
+            "artifact_path": str(path),
+            "model_loaded": False,
+            "model_version": "unavailable",
+            "model_tag": PRODUCTION_MODEL_TAG,
+            "feature_configuration": PRODUCTION_FEATURE_CONFIGURATION,
+            "feature_count": PRODUCTION_FEATURE_COUNT,
+            "hybrid_threshold": PRODUCTION_HYBRID_THRESHOLD,
+            "rule_weight": PRODUCTION_RULE_WEIGHT,
+            "ml_weight": PRODUCTION_ML_WEIGHT,
+        }
+    return {
+        "artifact_path": str(path),
+        "model_loaded": True,
+        "model_version": str(artifact["model_version"]),
+        "model_tag": str(artifact["model_tag"]),
+        "feature_configuration": str(artifact["feature_configuration"]),
+        "feature_count": len(artifact["feature_columns"]),
+        "feature_columns": [str(name) for name in artifact["feature_columns"]],
+        "hybrid_threshold": float(artifact["hybrid_threshold"]),
+        "ml_threshold": float(artifact["ml_threshold"]),
+        "rule_weight": float(artifact["rule_weight"]),
+        "ml_weight": float(artifact["ml_weight"]),
+    }
+
+
+
+

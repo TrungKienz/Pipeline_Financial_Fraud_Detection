@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from .config import PipelineConfig
-from .models import AccountStateUpdate, FraudDecision, TransactionEvent, WindowMetric
+from .models import AccountStateUpdate, FraudDecision, PredictionRecord, TransactionEvent, WindowMetric
 
 
 def _dt(value: datetime) -> str:
@@ -91,11 +91,72 @@ def fraud_decision_to_dict(event: TransactionEvent, decision: FraudDecision) -> 
         "txn_type": event.txn_type,
         "amount": event.amount,
         "risk_score": decision.risk_score,
-        "severity": decision.severity,
+        "rule_score": decision.rule_score,
         "ml_score": decision.ml_score,
+        "hybrid_score": decision.risk_score,
+        "threshold": decision.decision_threshold,
+        "decision": "alert" if decision.is_alert else "allow",
+        "severity": decision.severity,
         "ml_model_version": decision.ml_model_version,
+        "model_version": decision.ml_model_version,
+        "model_tag": decision.model_tag,
+        "feature_configuration": decision.feature_configuration,
+        "rule_weight": decision.rule_weight,
+        "ml_weight": decision.ml_weight,
         "triggered_rules": list(decision.triggered_rules),
         "is_alert": decision.is_alert,
+    }
+
+
+def prediction_record_from_decision(event: TransactionEvent, decision: FraudDecision) -> PredictionRecord:
+    return PredictionRecord(
+        event_id=decision.event_id,
+        account_id=event.name_orig,
+        name_dest=event.name_dest,
+        event_time=event.event_time,
+        txn_type=event.txn_type,
+        amount=event.amount,
+        risk_score=decision.risk_score,
+        severity=decision.severity,
+        rule_score=decision.rule_score,
+        ml_score=decision.ml_score,
+        hybrid_score=decision.risk_score,
+        decision_threshold=decision.decision_threshold,
+        ml_model_version=decision.ml_model_version,
+        model_tag=decision.model_tag,
+        feature_configuration=decision.feature_configuration,
+        rule_weight=decision.rule_weight,
+        ml_weight=decision.ml_weight,
+        triggered_rules=decision.triggered_rules,
+        is_alert=decision.is_alert,
+        alert_id=f"alert:{decision.event_id}" if decision.is_alert else None,
+    )
+
+
+def prediction_record_to_dict(record: PredictionRecord) -> dict[str, Any]:
+    return {
+        "event_id": record.event_id,
+        "account_id": record.account_id,
+        "nameDest": record.name_dest,
+        "event_time": _dt(record.event_time),
+        "txn_type": record.txn_type,
+        "amount": record.amount,
+        "risk_score": record.risk_score,
+        "rule_score": record.rule_score,
+        "ml_score": record.ml_score,
+        "hybrid_score": record.hybrid_score,
+        "threshold": record.decision_threshold,
+        "decision": "alert" if record.is_alert else "allow",
+        "severity": record.severity,
+        "ml_model_version": record.ml_model_version,
+        "model_version": record.ml_model_version,
+        "model_tag": record.model_tag,
+        "feature_configuration": record.feature_configuration,
+        "rule_weight": record.rule_weight,
+        "ml_weight": record.ml_weight,
+        "triggered_rules": list(record.triggered_rules),
+        "is_alert": record.is_alert,
+        "alert_id": record.alert_id,
     }
 
 
@@ -172,3 +233,5 @@ def risk_rule_event() -> list[dict[str, Any]]:
 
 def dumps(payload: dict[str, Any]) -> bytes:
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+
